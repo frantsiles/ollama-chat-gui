@@ -1,0 +1,99 @@
+PROJECT CONTEXT - OLLAMA CHAT GUI
+=================================
+
+Purpose
+-------
+This repository provides a local-first graphical chat app to interact with Ollama models.
+The main objective is to let users chat with local models and also work with real files
+inside a controlled workspace (scan/read/write/run command) so the AI can reason with
+actual project context.
+
+Core Stack
+----------
+- Python + Streamlit (UI)
+- Local Ollama HTTP API
+- Requests library for API integration
+
+Main Files
+----------
+- app.py
+  Streamlit interface and orchestration logic:
+  - chat flow
+  - model selection
+  - attachment handling (images/text files)
+  - workspace file tools (scan/read/write)
+  - workspace command execution
+
+- ollama_client.py
+  Ollama API adapter:
+  - list_models()
+  - get_model_capabilities()
+  - chat_stream()
+
+- run.sh
+  One-command startup:
+  - creates .venv if missing
+  - installs requirements
+  - launches streamlit app
+
+- .github/workflows/ci.yml
+  CI pipeline:
+  - ruff check
+  - python syntax compile checks
+
+Key Capabilities Already Implemented
+------------------------------------
+1) Chat with Ollama models (streaming responses)
+2) Capability detection per model (e.g., vision)
+3) File attachments in chat area:
+   - images for multimodal models
+   - text files injected as prompt context
+4) Local workspace tools:
+   - scan directory
+   - read text file
+   - write text file (overwrite/append)
+5) Execute shell command in workspace:
+   - bounded timeout
+   - stdout/stderr captured
+   - result added to AI context
+6) Security boundary for filesystem operations:
+   - path resolution restricted to Workspace root
+
+Operational Notes
+-----------------
+- The app is intentionally local-first. No cloud dependency is required for model inference.
+- Workspace operations are constrained to the configured Workspace root in the UI.
+- Large payloads are trimmed to protect context size:
+  - text file reads have max length
+  - command output has max length
+- Attachments have size limit (currently 8 MB per file).
+
+How to Run
+----------
+Option A:
+  ./run.sh
+
+Option B:
+  python -m venv .venv
+  source .venv/bin/activate
+  pip install -r requirements.txt
+  streamlit run app.py
+
+Quality & Validation
+--------------------
+- Lint: ruff check .
+- Syntax: python -m py_compile app.py ollama_client.py
+- CI mirrors these checks on push/PR.
+
+Repository Principles
+---------------------
+- Public and transparent development.
+- AI-assisted development is explicitly documented.
+- Keep implementation understandable and easy to onboard for new contributors.
+
+Suggested Next Improvements
+---------------------------
+- Chat/session persistence (SQLite)
+- Better diff-aware editing workflow from AI suggestions
+- Optional approval guard before write/command actions
+- Structured tool-invocation format in chat (for safer automation)

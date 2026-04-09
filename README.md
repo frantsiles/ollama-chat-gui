@@ -42,6 +42,20 @@ También puedes iniciar todo con:
 - Archivos de texto (`txt`, `md`, `json`, `csv`, `xml`, `yaml`, `yml`, `py`, `log`) se inyectan como contexto en el prompt.
 - Tamaño máximo por archivo: `8 MB`.
 
+## Trabajo con archivos locales (scan/read/write)
+La app incluye herramientas para que el flujo con IA también pueda trabajar con ficheros del proyecto:
+- **Escanear carpeta**: lista archivos y subcarpetas.
+- **Leer archivo**: carga contenido de un archivo de texto como contexto.
+- **Escribir archivo**: crea o modifica archivos directamente desde la app.
+- **Ejecutar comando**: corre comandos dentro del workspace y agrega la salida al contexto de chat.
+
+Estas acciones se agregan al contexto de la conversación para que el modelo pueda razonar con información real del workspace.
+
+### Seguridad del workspace
+- Todas las operaciones de archivos están limitadas al `Workspace root` configurado en la barra lateral.
+- No se permiten rutas fuera de ese workspace.
+- La lectura de archivos de texto se recorta para evitar contextos excesivamente grandes.
+
 ## Calidad de código (local)
 ```bash
 pip install ruff
