@@ -31,6 +31,21 @@ MAX_RAG_FILE_CHARS = 16000
 MAX_RAG_CHUNK_CHARS = 1200
 MAX_RAG_TOP_CHUNKS = 6
 RAG_IGNORED_DIRS = {".git", ".venv", "__pycache__", "node_modules", ".mypy_cache", ".ruff_cache"}
+RAG_TRIGGER_TERMS = (
+    "proyecto",
+    "readme",
+    "arquitectura",
+    "repositorio",
+    "código",
+    "codigo",
+    "source",
+    "fuente",
+)
+READ_INTENT_TERMS = ("lee", "leer", "leé", "resume", "resumí", "resúmeme", "explica", "analiza")
+FILE_REF_PATTERN = re.compile(
+    r"\b([a-zA-Z0-9_\-./]+\.(?:md|txt|py|json|yaml|yml|toml|csv|xml|log))\b",
+    re.IGNORECASE,
+)
 WRITE_COMMAND_PREFIXES = {
     "rm",
     "mv",
@@ -70,6 +85,8 @@ WRITE_GIT_SUBCOMMANDS = {
 }
 SUPPORTED_TOOL_NAMES = {"run_command", "read_file", "write_file", "create_directory", "list_directory"}
 TOOL_PROTOCOL_SYSTEM_PROMPT = (
+    "Tienes acceso al contexto del workspace que el sistema inyecta en mensajes `system`. "
+    "No pidas al usuario que pegue archivos locales que ya existen en el workspace; usa herramientas para leerlos cuando haga falta. "
     "Puedes solicitar herramientas del workspace devolviendo JSON (sin texto adicional) con formato "
     "{\"tool\":\"run_command\",\"args\":{\"command\":\"ls -la\"}}. "
     "Herramientas permitidas: "
@@ -453,10 +470,53 @@ def _build_local_rag_context(workspace_root: Path, user_prompt: str) -> tuple[st
 
 
 def _maybe_add_project_rag_context(workspace_root: Path, user_prompt: str) -> None:
+    prompt_lower = user_prompt.lower()
+    if not any(term in prompt_lower for term in RAG_TRIGGER_TERMS):
+        st.session_state.last_rag_sources = []
+        return
     rag_context, sources = _build_local_rag_context(workspace_root=workspace_root, user_prompt=user_prompt)
     st.session_state.last_rag_sources = sources
     if rag_context:
         _add_system_context(rag_context)
+
+
+def _extract_requested_files_from_prompt(workspace_root: Path, user_prompt: str) -> List[str]:
+    prompt_lower = user_prompt.lower()
+    if not any(term in prompt_lower for term in READ_INTENT_TERMS):
+        return []
+
+    requested: List[str] = []
+    if "readme" in prompt_lower:
+        for candidate in ("README.md", "readme.md"):
+            path = workspace_root / candidate
+            if path.exists() and path.is_file():
+                requested.append(candidate)
+                break
+
+    for match in FILE_REF_PATTERN.findall(user_prompt):
+        candidate = match.strip()
+        if candidate and candidate not in requested:
+            requested.append(candidate)
+    return requested
+
+
+def _maybe_add_requested_file_context(workspace_root: Path, user_prompt: str) -> None:
+    requested_files = _extract_requested_files_from_prompt(workspace_root, user_prompt)
+    if not requested_files:
+        return
+
+    blocks: List[str] = []
+    for file_ref in requested_files[:3]:
+        try:
+            content = _read_text_file(workspace_root=workspace_root, target=file_ref)
+            blocks.append(content)
+        except ValueError:
+            continue
+
+    if blocks:
+        _add_system_context(
+            "Contexto de archivo(s) solicitado(s) por el usuario:\n\n" + "\n\n---\n\n".join(blocks)
+        )
 
 
 def _is_write_or_edit_command(command: str) -> bool:
@@ -988,6 +1048,7 @@ def main() -> None:
         return
     _add_system_context(_build_workspace_context(workspace_root=workspace_root, command_cwd=command_cwd))
     _maybe_add_project_rag_context(workspace_root=workspace_root, user_prompt=user_prompt)
+    _maybe_add_requested_file_context(workspace_root=workspace_root, user_prompt=user_prompt)
 
     user_message, ignored_files = build_user_message(
         prompt=user_prompt,
@@ -1020,6 +1081,29 @@ def main() -> None:
         except OllamaClientError as exc:
             placeholder.error(str(exc))
             return
+        if not "".join(assistant_chunks).strip():
+            retry_messages = [m for m in st.session_state.messages if m.get("role") in {"user", "assistant"}][-10:]
+            retry_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Responde en texto normal y directo. "
+                        "Solo usa JSON de tool cuando realmente necesites ejecutar una acción."
+                    ),
+                },
+                *retry_messages,
+            ]
+            try:
+                for chunk in client.chat_stream(
+                    model=model,
+                    messages=retry_messages,
+                    options={"temperature": temperature},
+                ):
+                    assistant_chunks.append(chunk)
+                    placeholder.markdown("".join(assistant_chunks))
+            except OllamaClientError as exc:
+                placeholder.error(str(exc))
+                return
     assistant_content = "".join(assistant_chunks)
     if not assistant_content.strip():
         assistant_content = (
