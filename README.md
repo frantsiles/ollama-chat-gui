@@ -48,6 +48,7 @@ La app incluye herramientas para que el flujo con IA también pueda trabajar con
 - **Leer archivo**: carga contenido de un archivo de texto como contexto.
 - **Escribir archivo**: crea o modifica archivos directamente desde la app.
 - **Ejecutar comando**: corre comandos dentro del workspace y agrega la salida al contexto de chat.
+- **Comando desde chat**: escribe `/cmd <comando>` en el input principal para ejecutar directamente en el workspace activo.
 
 Estas acciones se agregan al contexto de la conversación para que el modelo pueda razonar con información real del workspace.
 

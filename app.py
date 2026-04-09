@@ -20,6 +20,7 @@ MAX_SCAN_RESULTS = 300
 MAX_READ_CHARS = 30000
 MAX_COMMAND_OUTPUT_CHARS = 30000
 COMMAND_TIMEOUT_SECONDS = 30
+CHAT_COMMAND_PREFIX = "/cmd"
 
 
 def init_state() -> None:
@@ -174,6 +175,17 @@ def _extract_text(uploaded_file: Any) -> str | None:
     if len(text) > MAX_TEXT_CHARS_PER_FILE:
         return text[:MAX_TEXT_CHARS_PER_FILE] + "\n...[contenido recortado]..."
     return text
+
+
+def _parse_chat_command(prompt: str) -> str | None:
+    stripped = prompt.strip()
+    if not stripped.startswith(CHAT_COMMAND_PREFIX):
+        return None
+
+    command = stripped[len(CHAT_COMMAND_PREFIX) :].strip()
+    if not command:
+        raise ValueError("Debes indicar un comando luego de /cmd.")
+    return command
 
 
 def build_user_message(
@@ -381,6 +393,7 @@ def main() -> None:
         help="Imágenes se envían al modelo si soporta vision. Archivos de texto se inyectan como contexto.",
     )
     st.caption(f"Tamaño máximo por archivo: {MAX_FILE_SIZE_MB} MB")
+    st.caption(f"También puedes ejecutar comandos desde el chat con `{CHAT_COMMAND_PREFIX} <comando>`.") 
 
     if uploaded_files:
         image_files = [f for f in uploaded_files if (f.type or "").startswith("image/")]
@@ -389,8 +402,37 @@ def main() -> None:
             for image_file in image_files:
                 st.image(image_file, caption=image_file.name, width=220)
 
-    user_prompt = st.chat_input("Escribe tu mensaje...")
+    user_prompt = st.chat_input(f"Escribe tu mensaje... (o {CHAT_COMMAND_PREFIX} <comando>)")
     if not user_prompt:
+        return
+
+    try:
+        chat_command = _parse_chat_command(user_prompt)
+    except ValueError as exc:
+        st.error(str(exc))
+        return
+
+    if chat_command:
+        command_user_content = f"🛠️ Ejecutar comando en workspace: `{chat_command}`"
+        st.session_state.messages.append({"role": "user", "content": command_user_content})
+        with st.chat_message("user"):
+            st.markdown(command_user_content)
+
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            try:
+                command_result = _run_workspace_command(workspace_root, chat_command)
+                _add_system_context(
+                    f"Resultado de comando en workspace `{workspace_root}`:\n\n{command_result}"
+                )
+                assistant_content = f"```text\n{command_result}\n```"
+                placeholder.markdown(assistant_content)
+            except ValueError as exc:
+                assistant_content = f"Error ejecutando comando: {exc}"
+                placeholder.error(assistant_content)
+
+        st.session_state.messages.append({"role": "assistant", "content": assistant_content})
+        st.rerun()
         return
 
     user_message, ignored_files = build_user_message(

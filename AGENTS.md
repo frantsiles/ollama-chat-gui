@@ -83,10 +83,11 @@ python -m py_compile ollama_client.py
 
 ### 5) Execution model and UX flow
 - On user prompt:
-  1. Build user message (including attachment-derived context)
-  2. Append to `st.session_state.messages`
-  3. Stream assistant response via `OllamaClient.chat_stream()`
-  4. Persist assistant message and rerun UI
+  1. If prompt starts with `/cmd`, execute the command in the active workspace root via `_run_workspace_command()`, render command output in chat, and append command result as `system` context.
+  2. Otherwise, build user message (including attachment-derived context)
+  3. Append to `st.session_state.messages`
+  4. Stream assistant response via `OllamaClient.chat_stream()`
+  5. Persist assistant message and rerun UI
 - This keeps conversation state entirely in-memory for the session (no persistence layer yet).
 
 ## File-level change guidance
