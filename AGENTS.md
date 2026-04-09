@@ -1,11 +1,12 @@
 # AGENTS.md
 
-This file provides guidance to WARP (warp.dev) when working with code in this repository.
+This file provides guidance to AI assistants when working with code in this repository.
 
 ## Project purpose and scope
-- Local-first Streamlit chat UI for Ollama models.
-- Main flows are chat streaming, model/capability selection, file attachments, and workspace-scoped file/command tools.
-- Keep changes aligned with local usage; model inference is expected to run against a local Ollama endpoint.
+- Local-first AI agent with Ollama models.
+- Three operation modes: Chat, Agent (ReAct), and Plan.
+- Modular architecture with clear separation of concerns.
+- Keep changes aligned with local usage; model inference runs against local Ollama endpoint.
 
 ## Setup and common commands
 ### Environment setup
@@ -15,12 +16,17 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Run the app
+### Run the NEW modular app
+```bash
+streamlit run app_new.py
+```
+
+### Run the legacy app (deprecated)
 ```bash
 streamlit run app.py
 ```
 
-### One-command startup (bootstraps venv + deps + app)
+### One-command startup
 ```bash
 ./run.sh
 ```
@@ -28,70 +34,92 @@ streamlit run app.py
 ### Lint and validation
 ```bash
 ruff check .
-python -m py_compile app.py ollama_client.py
-```
-
-### CI-equivalent local check
-```bash
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-pip install ruff
-ruff check .
-python -m py_compile app.py ollama_client.py
-```
-
-### Single-file validation (closest current equivalent to single-test execution)
-This repository does not currently include a test suite. For targeted verification of one module:
-```bash
-python -m py_compile app.py
-```
-or
-```bash
-python -m py_compile ollama_client.py
+python -m py_compile app_new.py config.py
+python -m py_compile core/*.py llm/*.py tools/*.py security/*.py rag/*.py ui/*.py
 ```
 
 ## Runtime configuration
 - Optional `.env` values (see `.env.example`):
   - `OLLAMA_BASE_URL` (default `http://localhost:11434`)
-  - `OLLAMA_DEFAULT_MODEL` (default empty in app; example uses `gemma3:latest`)
-- `WORKSPACE_ROOT` can be set via environment variable; otherwise defaults to current working directory at startup.
+  - `OLLAMA_DEFAULT_MODEL` (default empty)
+- `WORKSPACE_ROOT` can be set via environment variable; otherwise defaults to cwd.
 
-## Architecture map (big picture)
-### 1) Streamlit app is the orchestration layer
-- `app.py` owns UI rendering, session state, tool actions, and chat lifecycle.
-- `main()` builds sidebar config (base URL, model, temperature, workspace root), main chat timeline, workspace tools, and attachment uploader.
-- Session state keys (`messages`, `models`, `model_capabilities`, `workspace_root`, `uploader_key`) are the source of truth for UI and chat context.
+## Architecture map (NEW modular structure)
 
-### 2) Ollama integration is isolated in an adapter
-- `ollama_client.py` encapsulates all HTTP interactions with Ollama:
-  - `list_models()` → `/api/tags`
-  - `get_model_capabilities()` → `/api/show`
-  - `chat_stream()` → `/api/chat` with streamed line-by-line JSON handling
-- `OllamaClientError` is the app-level error boundary type consumed by `app.py`.
+```
+ollama-chat-gui/
+├── app_new.py              # NEW entry point
+├── app.py                  # Legacy monolith (deprecated)
+├── config.py               # Centralized configuration
+├── core/                   # Core agent logic
+│   ├── agent.py            # Agent with ReAct cycle
+│   ├── planner.py          # Plan creation and management
+│   ├── session.py          # Conversation session management
+│   └── models.py           # Data models (Message, Plan, ToolCall, etc.)
+├── llm/                    # LLM integration
+│   ├── client.py           # Ollama HTTP client
+│   └── prompts.py          # System prompts per mode
+├── tools/                  # Modular tool system
+│   ├── base.py             # BaseTool ABC
+│   ├── filesystem.py       # read_file, write_file, list_directory, etc.
+│   ├── command.py          # run_command tool
+│   └── registry.py         # Tool registration and dispatch
+├── security/               # Security layer
+│   ├── sandbox.py          # Path validation, command blocking
+│   └── approval.py         # Approval system for write operations
+├── rag/                    # RAG system
+│   └── local_rag.py        # Local workspace RAG
+└── ui/                     # Streamlit UI
+    ├── app.py              # Main UI orchestration
+    ├── state.py            # Centralized session state management
+    └── components/         # Reusable UI components
+        ├── sidebar.py      # Configuration sidebar
+        ├── chat.py         # Chat messages and input
+        ├── mode_selector.py # Mode selection (Chat/Agent/Plan)
+        ├── plan_view.py    # Plan display and interaction
+        └── approval.py     # Approval dialogs
+```
 
-### 3) Chat message construction supports multimodal + text context injection
-- `build_user_message()` in `app.py` merges prompt + attachments into the message payload:
-  - image files are base64-encoded into `images` only when model capability includes `vision`
-  - text-like files are decoded and appended into prompt content as structured context blocks
-  - unsupported/oversized files are tracked and surfaced to the user
+### Operation Modes
+1. **Chat Mode**: Simple conversation without tools
+2. **Agent Mode**: Automatic ReAct cycle with tool execution
+3. **Plan Mode**: Creates plan first, waits for approval, then executes
 
-### 4) Workspace operations are intentionally sandboxed
-- File and command tools in `app.py` (`_scan_directory`, `_read_text_file`, `_write_text_file`, `_run_workspace_command`) all operate relative to workspace root.
-- `_safe_resolve_path()` enforces boundary checks using resolved absolute paths and rejects escapes outside workspace.
-- Tool outputs are appended as `system` messages (`_add_system_context`) so the model can reason over real project state.
-- Guardrails include max scan results, max read chars, max command output chars, per-file upload size, and command timeout.
+### Key Components
 
-### 5) Execution model and UX flow
-- On user prompt:
-  1. If prompt starts with `/cmd`, execute the command in the active workspace root via `_run_workspace_command()`, render command output in chat, and append command result as `system` context.
-  2. Otherwise, build user message (including attachment-derived context)
-  3. Append to `st.session_state.messages`
-  4. Stream assistant response via `OllamaClient.chat_stream()`
-  5. Persist assistant message and rerun UI
-- This keeps conversation state entirely in-memory for the session (no persistence layer yet).
+#### 1) Core Agent (`core/agent.py`)
+- `Agent` class handles all three modes
+- `chat()` - simple chat without tools
+- `run()` - ReAct cycle with automatic tool execution
+- `execute_plan_step()` - step-by-step plan execution
+
+#### 2) Tool System (`tools/`)
+- `BaseTool` ABC defines tool interface
+- Each tool is a separate class (ReadFileTool, WriteFileTool, etc.)
+- `ToolRegistry` handles registration and dispatch
+- Tools are sandboxed to workspace root
+
+#### 3) Security (`security/`)
+- `Sandbox` validates paths and commands
+- `ApprovalManager` handles approval for write operations
+- Three approval levels: none, write-only, all
+
+#### 4) UI (`ui/`)
+- `AppState` centralizes all session state
+- Components are reusable and modular
+- Clean separation between UI and business logic
 
 ## File-level change guidance
-- For UI/flow changes, start in `app.py` (`main()` and helper functions near it).
-- For API/protocol/error handling changes, edit `ollama_client.py`.
-- Keep workspace safety checks intact when modifying scan/read/write/command features.
-- If adding persistent history or multi-conversation support, introduce a separate storage module rather than expanding `app.py` monolithically.
+- **Add new tool**: Create class in `tools/`, add to `ToolRegistry.AVAILABLE_TOOLS`
+- **Change prompts**: Edit `llm/prompts.py`
+- **Modify agent behavior**: Edit `core/agent.py`
+- **UI changes**: Edit files in `ui/components/`
+- **Add configuration**: Add to `config.py` and `ui/state.py`
+- **Security rules**: Edit `security/sandbox.py` or `config.py`
+
+## Migration from legacy app.py
+The new modular structure replaces the monolithic `app.py`. Key differences:
+- Configuration moved to `config.py`
+- Tools are now classes in `tools/` instead of inline functions
+- State management centralized in `ui/state.py`
+- Three explicit modes instead of implicit behavior detection

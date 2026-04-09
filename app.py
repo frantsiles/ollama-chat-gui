@@ -4,6 +4,7 @@ import os
 import re
 import shlex
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -24,27 +25,141 @@ MAX_READ_CHARS = 30000
 MAX_COMMAND_OUTPUT_CHARS = 30000
 COMMAND_TIMEOUT_SECONDS = 30
 CHAT_COMMAND_PREFIX = "/cmd"
+MAX_AGENT_STEPS = 8
 MAX_AUTOCONTEXT_ENTRIES = 60
 MAX_RAG_CONTEXT_CHARS = 10000
 MAX_RAG_FILES = 120
 MAX_RAG_FILE_CHARS = 16000
 MAX_RAG_CHUNK_CHARS = 1200
 MAX_RAG_TOP_CHUNKS = 6
+MAX_TOOL_REPAIR_CHARS = 16000
+CHAT_EXPORT_DIRNAME = ".chat_exports"
 RAG_IGNORED_DIRS = {".git", ".venv", "__pycache__", "node_modules", ".mypy_cache", ".ruff_cache"}
 RAG_TRIGGER_TERMS = (
     "proyecto",
     "readme",
+    "repo",
+    "repository",
     "arquitectura",
     "repositorio",
+    "análisis",
+    "analisis",
+    "analiza",
     "código",
     "codigo",
     "source",
     "fuente",
 )
 READ_INTENT_TERMS = ("lee", "leer", "leé", "resume", "resumí", "resúmeme", "explica", "analiza")
+ACTION_INTENT_TERMS = (
+    "analiza",
+    "analizar",
+    "revisa",
+    "revisar",
+    "inspecciona",
+    "inspeccionar",
+    "busca",
+    "buscar",
+    "encuentra",
+    "encontrar",
+    "documenta",
+    "documentar",
+    "actualiza",
+    "actualizar",
+    "edita",
+    "editar",
+    "modifica",
+    "modificar",
+    "corrige",
+    "corregir",
+    "crea",
+    "crear",
+    "genera",
+    "generar",
+    "ejecuta",
+    "ejecutar",
+    "implementa",
+    "implementar",
+    "refactoriza",
+    "refactorizar",
+)
+WRITE_INTENT_TERMS = (
+    "edita",
+    "editar",
+    "edición",
+    "modifica",
+    "modificar",
+    "actualiza",
+    "actualizar",
+    "actualice",
+    "actualices",
+    "actualicen",
+    "actualize",
+    "reescribe",
+    "reescribir",
+    "corrige",
+    "corregir",
+    "ajusta",
+    "ajustar",
+    "cambia",
+    "cambiar",
+    "crea",
+    "crear",
+    "crees",
+    "genera",
+    "generar",
+    "genere",
+    "escribe",
+    "escribir",
+    "sobrescribe",
+    "sobrescribir",
+    "edit",
+    "update",
+    "modify",
+    "rewrite",
+)
+APPEND_INTENT_TERMS = (
+    "agrega",
+    "agregar",
+    "añade",
+    "añadir",
+    "anexa",
+    "anexar",
+    "append",
+    "al final",
+    "al inicio",
+    "inserta",
+    "insertar",
+    "add",
+)
+EXPLICIT_OVERWRITE_INTENT_TERMS = (
+    "sobrescribe completo",
+    "sobrescribir completo",
+    "sobrescribe todo",
+    "sobrescribir todo",
+    "reemplaza todo",
+    "replace entire",
+    "replace all",
+    "desde cero",
+    "from scratch",
+)
 FILE_REF_PATTERN = re.compile(
     r"\b([a-zA-Z0-9_\-./]+\.(?:md|txt|py|json|yaml|yml|toml|csv|xml|log))\b",
     re.IGNORECASE,
+)
+REPLACE_PROMPT_PATTERNS = (
+    re.compile(
+        r"reemplaza\s+[\"'“”‘’](.+?)[\"'“”‘’]\s+por\s+[\"'“”‘’](.+?)[\"'“”‘’]",
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r"replace\s+[\"'“”‘’](.+?)[\"'“”‘’]\s+with\s+[\"'“”‘’](.+?)[\"'“”‘’]",
+        re.IGNORECASE | re.DOTALL,
+    ),
+)
+TOOL_JSON_CODE_BLOCK_PATTERN = re.compile(
+    r"```(?:json)?\s*(\{.*?\})\s*```",
+    re.IGNORECASE | re.DOTALL,
 )
 WRITE_COMMAND_PREFIXES = {
     "rm",
@@ -63,6 +178,32 @@ WRITE_COMMAND_PREFIXES = {
     "awk",
     "perl",
 }
+BLOCKED_COMMAND_PATTERNS = (
+    (
+        re.compile(r"(^|[;&|])\s*sudo\b", re.IGNORECASE),
+        "Bloqueado por seguridad: no se permite `sudo`.",
+    ),
+    (
+        re.compile(r"\brm\s+-rf\s+/(?:\s|$)", re.IGNORECASE),
+        "Bloqueado por seguridad: patrón peligroso detectado (`rm -rf /`).",
+    ),
+    (
+        re.compile(r"\bmkfs(\.[a-z0-9]+)?\b", re.IGNORECASE),
+        "Bloqueado por seguridad: no se permite formatear dispositivos.",
+    ),
+    (
+        re.compile(r"\bdd\s+[^\n]*\bof=/dev/", re.IGNORECASE),
+        "Bloqueado por seguridad: escritura directa en `/dev/*` no permitida.",
+    ),
+    (
+        re.compile(r":\(\)\s*\{\s*:\|:\s*&\s*\};:", re.IGNORECASE),
+        "Bloqueado por seguridad: patrón de fork bomb detectado.",
+    ),
+    (
+        re.compile(r"\b(shutdown|reboot|poweroff|halt)\b", re.IGNORECASE),
+        "Bloqueado por seguridad: no se permite apagar o reiniciar el sistema.",
+    ),
+)
 WRITE_COMMAND_OPERATORS = (">", ">>", "| tee", "sed -i")
 WRITE_GIT_SUBCOMMANDS = {
     "add",
@@ -85,14 +226,23 @@ WRITE_GIT_SUBCOMMANDS = {
 }
 SUPPORTED_TOOL_NAMES = {"run_command", "read_file", "write_file", "create_directory", "list_directory"}
 TOOL_PROTOCOL_SYSTEM_PROMPT = (
-    "Tienes acceso al contexto del workspace que el sistema inyecta en mensajes `system`. "
-    "No pidas al usuario que pegue archivos locales que ya existen en el workspace; usa herramientas para leerlos cuando haga falta. "
-    "Puedes solicitar herramientas del workspace devolviendo JSON (sin texto adicional) con formato "
-    "{\"tool\":\"run_command\",\"args\":{\"command\":\"ls -la\"}}. "
+    "Eres un agente de IA autónomo para tareas de desarrollo en un workspace local. "
+    "Sigue un ciclo ReAct: planifica el siguiente paso, ejecuta una sola tool cuando sea "
+    "necesario, evalúa la observación y repite hasta completar la tarea. "
+    "Reglas estrictas: "
+    "1) Si necesitas una tool, responde SOLO JSON válido sin markdown ni texto extra con "
+    "formato {\"tool\":\"run_command\",\"args\":{\"command\":\"ls -la\"}}. "
+    "2) Usa máximo una tool por iteración. "
+    "3) Cuando ya no necesites tools, responde en lenguaje natural con la solución final. "
+    "4) No pidas al usuario pegar archivos del workspace; usa read_file/list_directory. "
+    "5) Para editar usa write_file, usa append=true para agregar contenido y preserva el resto "
+    "del archivo cuando la edición sea parcial. "
+    "6) Nunca devuelvas pseudo-JSON o JSON inválido; si decides usar tool, corrige y entrega JSON válido. "
+    "7) Si el usuario da una instrucción directa accionable, avanza con tools y evita pedir detalles "
+    "innecesarios; aplica el cambio mínimo seguro posible. "
     "Herramientas permitidas: "
     "run_command(command), read_file(path), write_file(path, content, append=false), "
-    "create_directory(path), list_directory(path='.', recursive=false). "
-    "Usa herramientas solo cuando sea necesario; cuando no necesites tools, responde normalmente en texto."
+    "create_directory(path), list_directory(path='.', recursive=false)."
 )
 
 
@@ -119,8 +269,14 @@ def init_state() -> None:
         st.session_state.pending_tool_request = ""
     if "pending_tool_request_cwd" not in st.session_state:
         st.session_state.pending_tool_request_cwd = ""
+    if "pending_agent_loop" not in st.session_state:
+        st.session_state.pending_agent_loop = False
     if "last_rag_sources" not in st.session_state:
         st.session_state.last_rag_sources = []
+    if "last_agent_trace" not in st.session_state:
+        st.session_state.last_agent_trace = []
+    if "last_chat_export_path" not in st.session_state:
+        st.session_state.last_chat_export_path = ""
 
 
 def _resolve_workspace_root(root_text: str) -> Path:
@@ -227,6 +383,114 @@ def _write_text_file(workspace_root: Path, target: str, content: str, append: bo
 def _add_system_context(context: str) -> None:
     st.session_state.messages.append({"role": "system", "content": context})
 
+def _filter_exportable_messages(messages: List[Dict[str, Any]], include_system: bool) -> List[Dict[str, Any]]:
+    exportable: List[Dict[str, Any]] = []
+    for msg in messages:
+        role = str(msg.get("role", "")).strip().lower()
+        if role not in {"user", "assistant", "system"}:
+            continue
+        if role == "system" and not include_system:
+            continue
+        attachments = msg.get("attachments") or []
+        exportable.append(
+            {
+                "role": role,
+                "content": str(msg.get("content", "")),
+                "attachments": list(attachments),
+            }
+        )
+    return exportable
+
+
+def _build_chat_export_markdown(messages: List[Dict[str, Any]]) -> str:
+    role_labels = {"user": "Usuario", "assistant": "Asistente", "system": "Sistema"}
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines: List[str] = [
+        "# Export de Chat",
+        "",
+        f"- Generado: {timestamp}",
+        f"- Mensajes: {len(messages)}",
+        "",
+    ]
+    for index, msg in enumerate(messages, start=1):
+        role = str(msg.get("role", ""))
+        label = role_labels.get(role, role.capitalize())
+        lines.append(f"## {index}. {label}")
+        lines.append("")
+        attachments = msg.get("attachments", [])
+        if attachments:
+            lines.append(f"Adjuntos: {', '.join(str(item) for item in attachments)}")
+            lines.append("")
+        content = str(msg.get("content", "")).strip()
+        lines.append(content if content else "[sin contenido]")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _build_chat_export_json(messages: List[Dict[str, Any]]) -> str:
+    payload = {
+        "exported_at_utc": datetime.now(timezone.utc).isoformat(),
+        "message_count": len(messages),
+        "messages": messages,
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+
+
+def _export_chat_to_workspace(
+    workspace_root: Path,
+    messages: List[Dict[str, Any]],
+    export_format: str,
+    include_system: bool,
+) -> Path:
+    if not workspace_root.exists() or not workspace_root.is_dir():
+        raise ValueError("Workspace root inválido para exportación.")
+
+    normalized_format = export_format.strip().lower()
+    if normalized_format not in {"markdown", "json"}:
+        raise ValueError("Formato de exportación no soportado.")
+
+    exportable_messages = _filter_exportable_messages(messages=messages, include_system=include_system)
+    if not exportable_messages:
+        raise ValueError("No hay mensajes para exportar.")
+
+    export_dir = workspace_root / CHAT_EXPORT_DIRNAME
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    extension = "md" if normalized_format == "markdown" else "json"
+    export_path = export_dir / f"chat_export_{timestamp}.{extension}"
+
+    if normalized_format == "markdown":
+        content = _build_chat_export_markdown(exportable_messages)
+    else:
+        content = _build_chat_export_json(exportable_messages)
+
+    export_path.write_text(content, encoding="utf-8")
+    return export_path
+
+
+def _validate_command_safety(command: str) -> str | None:
+    stripped = command.strip()
+    if not stripped:
+        return "Debes indicar un comando."
+    if len(stripped) > 1200:
+        return "Comando demasiado largo para ejecución segura."
+    if stripped in {"cd", "c..", "cd.."}:
+        return None
+    if stripped.startswith("cd "):
+        try:
+            tokens = shlex.split(stripped)
+        except ValueError:
+            return "Comando `cd` inválido."
+        if tokens and tokens[0] == "cd" and len(tokens) <= 2:
+            return None
+
+    for pattern, message in BLOCKED_COMMAND_PATTERNS:
+        if pattern.search(stripped):
+            return message
+    return None
+
+
 def _run_workspace_command(command_cwd: Path, command: str) -> str:
     if not command.strip():
         raise ValueError("Debes indicar un comando.")
@@ -307,6 +571,7 @@ def _relative_path_label(workspace_root: Path, target: Path) -> str:
         return "."
     return str(target.resolve().relative_to(workspace_root.resolve()))
 
+
 def _normalize_directory_command(command: str) -> str:
     stripped = command.strip()
     if stripped in {"c..", "cd.."}:
@@ -318,12 +583,17 @@ def _execute_workspace_command_with_cd(
     workspace_root: Path, command_cwd: Path, command: str
 ) -> tuple[str, Path]:
     stripped = _normalize_directory_command(command).strip()
+    safety_error = _validate_command_safety(stripped)
+    if safety_error:
+        raise ValueError(safety_error)
     try:
         tokens = shlex.split(stripped)
     except ValueError as exc:
         raise ValueError(f"Comando inválido: {exc}") from exc
 
     if tokens and tokens[0] == "cd":
+        if len(tokens) > 2:
+            raise ValueError("El comando `cd` solo permite una ruta sin operadores adicionales.")
         target = tokens[1] if len(tokens) > 1 else "."
         new_cwd = _safe_resolve_path_from(workspace_root, command_cwd, target)
         if not new_cwd.exists() or not new_cwd.is_dir():
@@ -480,9 +750,79 @@ def _maybe_add_project_rag_context(workspace_root: Path, user_prompt: str) -> No
         _add_system_context(rag_context)
 
 
+def _is_question_like_prompt(user_prompt: str) -> bool:
+    stripped = user_prompt.strip().lower()
+    if not stripped:
+        return False
+    if "?" in stripped:
+        return True
+    question_prefixes = (
+        "qué ",
+        "que ",
+        "cómo ",
+        "como ",
+        "cuál ",
+        "cual ",
+        "por qué ",
+        "porque ",
+        "how ",
+        "what ",
+        "why ",
+    )
+    return any(stripped.startswith(prefix) for prefix in question_prefixes)
+
+
+def _is_action_intent_prompt(user_prompt: str) -> bool:
+    if _is_question_like_prompt(user_prompt):
+        return False
+    prompt_lower = user_prompt.lower()
+    if _is_write_intent_prompt(user_prompt):
+        return True
+    if any(term in prompt_lower for term in ACTION_INTENT_TERMS):
+        return True
+    return False
+
+def _is_write_intent_prompt(user_prompt: str) -> bool:
+    prompt_lower = user_prompt.lower()
+    return any(term in prompt_lower for term in WRITE_INTENT_TERMS)
+
+def _is_append_intent_prompt(user_prompt: str) -> bool:
+    prompt_lower = user_prompt.lower()
+    return any(term in prompt_lower for term in APPEND_INTENT_TERMS)
+
+
+def _is_explicit_overwrite_intent_prompt(user_prompt: str) -> bool:
+    prompt_lower = user_prompt.lower()
+    return any(term in prompt_lower for term in EXPLICIT_OVERWRITE_INTENT_TERMS)
+
+
+def _extract_replace_instruction(user_prompt: str) -> tuple[str, str] | None:
+    for pattern in REPLACE_PROMPT_PATTERNS:
+        match = pattern.search(user_prompt)
+        if not match:
+            continue
+        before = match.group(1)
+        after = match.group(2)
+        if before:
+            return before, after
+    return None
+
+
+def _read_text_file_raw(path: Path) -> str | None:
+    raw = path.read_bytes()
+    for encoding in ("utf-8", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return None
+
+
 def _extract_requested_files_from_prompt(workspace_root: Path, user_prompt: str) -> List[str]:
     prompt_lower = user_prompt.lower()
-    if not any(term in prompt_lower for term in READ_INTENT_TERMS):
+    has_read_intent = any(term in prompt_lower for term in READ_INTENT_TERMS)
+    has_write_intent = _is_write_intent_prompt(user_prompt)
+    if not has_read_intent and not has_write_intent:
         return []
 
     requested: List[str] = []
@@ -540,39 +880,256 @@ def _is_write_or_edit_command(command: str) -> bool:
         return True
     return False
 
-def _extract_json_candidate(text: str) -> str | None:
+
+def _extract_json_candidates(text: str) -> List[str]:
     stripped = text.strip()
     if not stripped:
-        return None
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if len(lines) >= 3:
-            fence_header = lines[0].strip().lower()
-            if fence_header.startswith("```json") or fence_header == "```":
-                if lines[-1].strip() == "```":
-                    return "\n".join(lines[1:-1]).strip()
+        return []
+
+    candidates: List[str] = []
+    for match in TOOL_JSON_CODE_BLOCK_PATTERN.findall(text):
+        candidate = match.strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
     if stripped.startswith("{") and stripped.endswith("}"):
-        return stripped
-    return None
+        candidates.append(stripped)
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            parsed, consumed = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        candidate = text[index : index + consumed].strip()
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+    return candidates
+
+
+def _normalize_write_file_tool_request(
+    workspace_root: Path,
+    user_prompt: str,
+    tool_request: Dict[str, Any],
+) -> tuple[Dict[str, Any], str | None]:
+    if tool_request.get("tool") != "write_file":
+        return tool_request, None
+
+    args = dict(tool_request.get("args", {}))
+    target = str(args.get("path", "")).strip()
+    if not target:
+        return tool_request, None
+
+    file_path = _safe_resolve_path(workspace_root, target)
+    if not file_path.exists() or not file_path.is_file():
+        return {"tool": "write_file", "args": args}, None
+
+    existing_text = _read_text_file_raw(file_path)
+    if existing_text is None:
+        return {"tool": "write_file", "args": args}, None
+
+    append = bool(args.get("append", False))
+    content = str(args.get("content", ""))
+    replace_instruction = _extract_replace_instruction(user_prompt)
+
+    if replace_instruction and not append:
+        before, after = replace_instruction
+        if before in existing_text:
+            args["append"] = False
+            args["content"] = existing_text.replace(before, after)
+            return (
+                {"tool": "write_file", "args": args},
+                "Se aplicó reemplazo seguro preservando el resto del archivo.",
+            )
+
+    if _is_append_intent_prompt(user_prompt) and not append:
+        if content and existing_text and not existing_text.endswith("\n") and not content.startswith("\n"):
+            content = "\n\n" + content
+        args["append"] = True
+        args["content"] = content
+        return (
+            {"tool": "write_file", "args": args},
+            "Se ajustó la solicitud a append=true para evitar sobrescribir el archivo completo.",
+        )
+
+    if (
+        _is_write_intent_prompt(user_prompt)
+        and not append
+        and not _is_explicit_overwrite_intent_prompt(user_prompt)
+    ):
+        existing_len = len(existing_text)
+        new_len = len(content)
+        if existing_len >= 200 and new_len < int(existing_len * 0.6):
+            raise ValueError(
+                "Bloqueado para evitar sobrescritura destructiva: la IA intentó reemplazar un "
+                "archivo existente con contenido parcial. Si querías reemplazar todo, indícalo "
+                "explícitamente con 'sobrescribe completo'."
+            )
+
+    return {"tool": "write_file", "args": args}, None
 
 
 def _extract_tool_request(assistant_text: str) -> Dict[str, Any] | None:
-    candidate = _extract_json_candidate(assistant_text)
-    if not candidate:
+    for candidate in _extract_json_candidates(assistant_text):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(parsed, dict):
+            continue
+        tool_name = parsed.get("tool")
+        args = parsed.get("args", {})
+        if not isinstance(tool_name, str) or tool_name not in SUPPORTED_TOOL_NAMES:
+            continue
+        if not isinstance(args, dict):
+            continue
+        return {"tool": tool_name, "args": args}
+    return None
+
+def _looks_like_tool_request_text(assistant_text: str) -> bool:
+    normalized = assistant_text.lower()
+    if "\"tool\"" in normalized and "\"args\"" in normalized:
+        return True
+    if "{" not in normalized:
+        return False
+    return any(tool_name in normalized for tool_name in SUPPORTED_TOOL_NAMES)
+
+
+def _attempt_tool_request_repair_from_text(
+    client: OllamaClient,
+    model: str,
+    temperature: float,
+    assistant_text: str,
+) -> Dict[str, Any] | None:
+    trimmed = assistant_text.strip()
+    if not trimmed:
         return None
+    if len(trimmed) > MAX_TOOL_REPAIR_CHARS:
+        trimmed = trimmed[:MAX_TOOL_REPAIR_CHARS]
+
+    recovery_messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": (
+                "Recibirás una solicitud de tool potencialmente malformada. "
+                "Convierte esa solicitud a JSON válido de una tool soportada, sin explicaciones. "
+                "Si no hay una solicitud de tool clara, responde `{}`."
+            ),
+        },
+        {
+            "role": "user",
+            "content": f"Corrige y devuelve solo JSON válido:\n\n{trimmed}",
+        },
+    ]
+    chunks: List[str] = []
     try:
-        parsed = json.loads(candidate)
-    except json.JSONDecodeError:
+        for chunk in client.chat_stream(
+            model=model,
+            messages=recovery_messages,
+            options={"temperature": temperature},
+        ):
+            chunks.append(chunk)
+    except OllamaClientError:
         return None
-    if not isinstance(parsed, dict):
+    recovery_text = "".join(chunks)
+    return _extract_tool_request(recovery_text)
+
+
+def _attempt_tool_request_recovery(
+    client: OllamaClient,
+    model: str,
+    temperature: float,
+    messages: List[Dict[str, Any]],
+) -> Dict[str, Any] | None:
+    recovery_messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": (
+                "El usuario pidió una acción de edición/escritura de archivos en el workspace. "
+                "Responde SOLO con un JSON válido de una herramienta soportada, sin texto extra, "
+                "sin markdown y sin explicaciones."
+            ),
+        },
+        *messages,
+        {
+            "role": "user",
+            "content": (
+                "Devuelve únicamente la solicitud JSON de herramienta necesaria para aplicar los "
+                "cambios solicitados."
+            ),
+        },
+    ]
+    chunks: List[str] = []
+    try:
+        for chunk in client.chat_stream(
+            model=model,
+            messages=recovery_messages,
+            options={"temperature": temperature},
+        ):
+            chunks.append(chunk)
+    except OllamaClientError:
         return None
-    tool_name = parsed.get("tool")
-    args = parsed.get("args", {})
-    if not isinstance(tool_name, str) or tool_name not in SUPPORTED_TOOL_NAMES:
+    recovery_text = "".join(chunks)
+    return _extract_tool_request(recovery_text)
+
+
+def _attempt_action_tool_request_recovery(
+    client: OllamaClient,
+    model: str,
+    temperature: float,
+    messages: List[Dict[str, Any]],
+    user_prompt: str,
+    assistant_text: str,
+) -> Dict[str, Any] | None:
+    trimmed_assistant = assistant_text.strip()
+    if len(trimmed_assistant) > MAX_TOOL_REPAIR_CHARS:
+        trimmed_assistant = trimmed_assistant[:MAX_TOOL_REPAIR_CHARS]
+
+    recovery_messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT},
+        {
+            "role": "system",
+            "content": (
+                "El usuario dio una instrucción directa y accionable. "
+                "Debes avanzar con la siguiente tool ejecutable y NO pedir más detalles, "
+                "salvo que sea imposible continuar de forma segura. "
+                "Responde SOLO JSON válido de una tool soportada."
+            ),
+        },
+        *messages[-18:],
+        {
+            "role": "system",
+            "content": (
+                "Última respuesta del asistente (si no fue tool):\n"
+                f"{trimmed_assistant or '[vacía]'}"
+            ),
+        },
+        {
+            "role": "user",
+            "content": (
+                f"Instrucción original del usuario:\n{user_prompt}\n\n"
+                "Devuelve solo JSON válido con la siguiente acción."
+            ),
+        },
+    ]
+    chunks: List[str] = []
+    try:
+        for chunk in client.chat_stream(
+            model=model,
+            messages=recovery_messages,
+            options={"temperature": temperature},
+        ):
+            chunks.append(chunk)
+    except OllamaClientError:
         return None
-    if not isinstance(args, dict):
-        return None
-    return {"tool": tool_name, "args": args}
+    recovery_text = "".join(chunks)
+    return _extract_tool_request(recovery_text)
 
 
 def _validate_tool_request(tool_request: Dict[str, Any]) -> str | None:
@@ -583,6 +1140,9 @@ def _validate_tool_request(tool_request: Dict[str, Any]) -> str | None:
         command = args.get("command")
         if not isinstance(command, str) or not command.strip():
             return "run_command requiere `args.command` como string no vacío."
+        safety_error = _validate_command_safety(command)
+        if safety_error:
+            return f"run_command bloqueado: {safety_error}"
         return None
 
     if tool_name == "read_file":
@@ -689,6 +1249,250 @@ def _execute_tool_request(
         return result, command_cwd
 
     raise ValueError(f"Herramienta no soportada: {tool_name}")
+
+
+def _call_model_once(
+    client: OllamaClient,
+    model: str,
+    temperature: float,
+    messages: List[Dict[str, Any]],
+) -> str:
+    chunks: List[str] = []
+    for chunk in client.chat_stream(
+        model=model,
+        messages=messages,
+        options={"temperature": temperature},
+    ):
+        chunks.append(chunk)
+    return "".join(chunks)
+
+
+def _build_tool_observation(tool_request: Dict[str, Any], tool_result: str, step: int | None) -> str:
+    step_label = f"paso {step}" if step else "paso aprobado por usuario"
+    return (
+        f"Observation ({step_label}):\n"
+        f"- Solicitud: {_format_tool_request_for_user(tool_request)}\n\n"
+        f"{tool_result}"
+    )
+
+def _format_trace_result_preview(text: str, max_chars: int = 180) -> str:
+    compact = " ".join(text.strip().split())
+    if not compact:
+        return "[sin salida]"
+    if len(compact) <= max_chars:
+        return compact
+    return compact[:max_chars] + "..."
+
+
+def _run_agent_reasoning_loop(
+    client: OllamaClient,
+    model: str,
+    temperature: float,
+    workspace_root: Path,
+    command_cwd: Path,
+    user_prompt: str,
+) -> Dict[str, Any]:
+    current_cwd = command_cwd
+    executed_steps = 0
+    trace_lines: List[str] = []
+    action_intent = _is_action_intent_prompt(user_prompt)
+    action_recovery_used = False
+    action_guidance_injected = False
+
+    for step in range(1, MAX_AGENT_STEPS + 1):
+        trace_lines.append(f"Paso {step}: consultando al modelo.")
+        model_messages = [{"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT}, *st.session_state.messages]
+        assistant_content = _call_model_once(
+            client=client,
+            model=model,
+            temperature=temperature,
+            messages=model_messages,
+        )
+        if not assistant_content.strip():
+            trace_lines.append(f"Paso {step}: respuesta vacía, aplicando reintento.")
+            retry_messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "Responde con contenido útil. Si necesitas tools, usa JSON válido de tool; "
+                        "si no, responde con la solución final en texto."
+                    ),
+                },
+                *st.session_state.messages[-12:],
+            ]
+            assistant_content = _call_model_once(
+                client=client,
+                model=model,
+                temperature=temperature,
+                messages=retry_messages,
+            )
+        if not assistant_content.strip():
+            return {
+                "status": "completed",
+                "assistant_content": (
+                    "No recibí contenido del modelo durante el ciclo del agente. "
+                    "Intenta nuevamente con una instrucción más específica."
+                ),
+                "new_cwd": current_cwd,
+                "executed_steps": executed_steps,
+                "trace_lines": trace_lines,
+            }
+
+        tool_request = _extract_tool_request(assistant_content)
+        if not tool_request and _looks_like_tool_request_text(assistant_content):
+            repaired_tool_request = _attempt_tool_request_repair_from_text(
+                client=client,
+                model=model,
+                temperature=temperature,
+                assistant_text=assistant_content,
+            )
+            if repaired_tool_request:
+                tool_request = repaired_tool_request
+                trace_lines.append(
+                    f"Paso {step}: se reparó una solicitud de tool malformada: "
+                    f"`{_format_tool_request_for_user(tool_request)}`."
+                )
+
+        if not tool_request and step == 1 and _is_write_intent_prompt(user_prompt):
+            recovered_tool_request = _attempt_tool_request_recovery(
+                client=client,
+                model=model,
+                temperature=temperature,
+                messages=st.session_state.messages,
+            )
+            if recovered_tool_request:
+                tool_request = recovered_tool_request
+                trace_lines.append(
+                    f"Paso {step}: se recuperó una solicitud de tool: "
+                    f"`{_format_tool_request_for_user(tool_request)}`."
+                )
+
+        if not tool_request and action_intent and user_prompt.strip() and not action_recovery_used:
+            action_recovery_used = True
+            recovered_action_tool_request = _attempt_action_tool_request_recovery(
+                client=client,
+                model=model,
+                temperature=temperature,
+                messages=st.session_state.messages,
+                user_prompt=user_prompt,
+                assistant_text=assistant_content,
+            )
+            if recovered_action_tool_request:
+                tool_request = recovered_action_tool_request
+                trace_lines.append(
+                    f"Paso {step}: recuperación forzada para instrucción accionable → "
+                    f"`{_format_tool_request_for_user(tool_request)}`."
+                )
+
+        if not tool_request:
+            if action_intent and step < MAX_AGENT_STEPS and not action_guidance_injected:
+                action_guidance_injected = True
+                trace_lines.append(
+                    f"Paso {step}: no hubo tool pese a instrucción accionable; "
+                    "se inyecta guía y se reintenta."
+                )
+                _add_system_context(
+                    "Instrucción operativa del sistema: el usuario pidió una acción directa. "
+                    "No pidas más detalle salvo bloqueo real; usa la siguiente tool necesaria."
+                )
+                continue
+            trace_lines.append(f"Paso {step}: respuesta final sin tool, ciclo completado.")
+            return {
+                "status": "completed",
+                "assistant_content": assistant_content,
+                "new_cwd": current_cwd,
+                "executed_steps": executed_steps,
+                "trace_lines": trace_lines,
+            }
+
+        validation_error = _validate_tool_request(tool_request)
+        if validation_error:
+            trace_lines.append(f"Paso {step}: tool inválida ({validation_error}).")
+            _add_system_context(
+                "Observation (tool inválida):\n"
+                f"- Error: {validation_error}\n"
+                f"- Respuesta original: {assistant_content}"
+            )
+            executed_steps += 1
+            continue
+
+        try:
+            tool_request, safety_adjustment = _normalize_write_file_tool_request(
+                workspace_root=workspace_root,
+                user_prompt=user_prompt,
+                tool_request=tool_request,
+            )
+        except ValueError as exc:
+            return {
+                "status": "completed",
+                "assistant_content": f"⚠️ {exc}",
+                "new_cwd": current_cwd,
+                "executed_steps": executed_steps,
+                "trace_lines": trace_lines,
+            }
+
+        validation_error = _validate_tool_request(tool_request)
+        if validation_error:
+            trace_lines.append(
+                f"Paso {step}: tool inválida tras ajustes de seguridad ({validation_error})."
+            )
+            _add_system_context(f"Observation (tool inválida tras ajustes de seguridad): {validation_error}")
+            executed_steps += 1
+            continue
+
+        if safety_adjustment:
+            trace_lines.append(f"Paso {step}: ajuste de seguridad aplicado ({safety_adjustment}).")
+            _add_system_context(f"Ajuste de seguridad aplicado al write_file: {safety_adjustment}")
+
+        if _is_tool_request_write(tool_request) and not st.session_state.allow_write_commands_always:
+            st.session_state.pending_tool_request = json.dumps(tool_request, ensure_ascii=False)
+            st.session_state.pending_tool_request_cwd = str(current_cwd)
+            st.session_state.pending_agent_loop = True
+            trace_lines.append(
+                f"Paso {step}: pendiente aprobación para `{_format_tool_request_for_user(tool_request)}`."
+            )
+            return {
+                "status": "awaiting_approval",
+                "assistant_content": (
+                    "La IA necesita aprobación para continuar el plan con esta acción:\n"
+                    f"`{_format_tool_request_for_user(tool_request)}`\n\n"
+                    "Usa los botones **Aceptar**, **Rechazar** o **Aceptar siempre**."
+                ),
+                "new_cwd": current_cwd,
+                "executed_steps": executed_steps,
+                "trace_lines": trace_lines,
+            }
+
+        try:
+            tool_result, current_cwd = _execute_tool_request(
+                workspace_root=workspace_root,
+                command_cwd=current_cwd,
+                tool_request=tool_request,
+            )
+            trace_lines.append(
+                f"Paso {step}: ejecutada `{_format_tool_request_for_user(tool_request)}` → "
+                f"{_format_trace_result_preview(tool_result)}"
+            )
+        except ValueError as exc:
+            tool_result = f"Error ejecutando tool solicitada por la IA: {exc}"
+            trace_lines.append(
+                f"Paso {step}: error en `{_format_tool_request_for_user(tool_request)}` ({exc})."
+            )
+
+        _add_system_context(_build_tool_observation(tool_request=tool_request, tool_result=tool_result, step=step))
+        executed_steps += 1
+    trace_lines.append(f"Límite alcanzado: {MAX_AGENT_STEPS} pasos.")
+
+    return {
+        "status": "max_steps",
+        "assistant_content": (
+            f"Se alcanzó el límite de {MAX_AGENT_STEPS} pasos del agente. "
+            "Puedes pedirle que continúe con una instrucción más específica."
+        ),
+        "new_cwd": current_cwd,
+        "executed_steps": executed_steps,
+        "trace_lines": trace_lines,
+    }
 
 
 def build_user_message(
@@ -804,7 +1608,46 @@ def main() -> None:
 
         if st.button("Limpiar chat"):
             st.session_state.messages = []
+            st.session_state.pending_tool_request = ""
+            st.session_state.pending_tool_request_cwd = ""
+            st.session_state.pending_agent_loop = False
+            st.session_state.pending_command = ""
+            st.session_state.pending_command_cwd = ""
+            st.session_state.last_agent_trace = []
             st.rerun()
+
+        st.divider()
+        st.subheader("Exportar chat")
+        export_format = st.selectbox(
+            "Formato de archivo",
+            options=["markdown", "json"],
+            format_func=lambda value: "Markdown (.md)" if value == "markdown" else "JSON (.json)",
+            key="chat_export_format",
+        )
+        include_system_on_export = st.checkbox(
+            "Incluir mensajes de sistema",
+            value=True,
+            key="chat_export_include_system",
+        )
+        if st.button("Exportar chat a archivo"):
+            try:
+                export_workspace_root = _resolve_workspace_root(st.session_state.workspace_root)
+                export_path = _export_chat_to_workspace(
+                    workspace_root=export_workspace_root,
+                    messages=st.session_state.messages,
+                    export_format=export_format,
+                    include_system=include_system_on_export,
+                )
+                st.session_state.last_chat_export_path = str(export_path)
+                try:
+                    relative_export_path = export_path.relative_to(export_workspace_root)
+                except ValueError:
+                    relative_export_path = export_path
+                st.success(f"Chat exportado en `{relative_export_path}`")
+            except ValueError as exc:
+                st.error(str(exc))
+        if st.session_state.last_chat_export_path:
+            st.caption(f"Último export: `{st.session_state.last_chat_export_path}`")
 
     for msg in st.session_state.messages:
         if msg["role"] not in {"user", "assistant"}:
@@ -860,6 +1703,9 @@ def main() -> None:
     )
     if st.session_state.last_rag_sources:
         st.caption("Fuentes RAG usadas (última respuesta): " + ", ".join(st.session_state.last_rag_sources))
+    if st.session_state.last_agent_trace:
+        with st.expander("Traza del agente (última ejecución)", expanded=False):
+            st.markdown("\n".join(f"- {line}" for line in st.session_state.last_agent_trace))
     if st.session_state.pending_command:
         st.warning(
             "Hay un comando pendiente que puede escribir/editar archivos:\n"
@@ -891,72 +1737,6 @@ def main() -> None:
             st.session_state.pending_command = ""
             st.session_state.pending_command_cwd = ""
             st.rerun()
-    if st.session_state.pending_tool_request:
-        st.warning("Hay una acción pendiente solicitada por la IA que puede escribir/editar archivos.")
-        pending_tool_obj = json.loads(st.session_state.pending_tool_request)
-        st.code(_format_tool_request_for_user(pending_tool_obj), language="text")
-        approve_tool_col, reject_tool_col, always_tool_col = st.columns(3)
-
-        if approve_tool_col.button("Aceptar", key="approve_pending_tool"):
-            pending_cwd = Path(
-                st.session_state.pending_tool_request_cwd or st.session_state.command_cwd
-            ).expanduser().resolve()
-            try:
-                tool_result, new_cwd = _execute_tool_request(
-                    workspace_root=workspace_root,
-                    command_cwd=pending_cwd,
-                    tool_request=pending_tool_obj,
-                )
-                st.session_state.command_cwd = str(new_cwd)
-                _add_system_context(
-                    f"Resultado de tool aprobada por usuario (cwd: `{new_cwd}`):\n\n{tool_result}"
-                )
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"```text\n{tool_result}\n```"}
-                )
-            except ValueError as exc:
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"Error ejecutando tool: {exc}"}
-                )
-            st.session_state.pending_tool_request = ""
-            st.session_state.pending_tool_request_cwd = ""
-            st.rerun()
-
-        if reject_tool_col.button("Rechazar", key="reject_pending_tool"):
-            st.session_state.messages.append(
-                {"role": "assistant", "content": "Acción de tool rechazada por el usuario."}
-            )
-            st.session_state.pending_tool_request = ""
-            st.session_state.pending_tool_request_cwd = ""
-            st.rerun()
-
-        if always_tool_col.button("Aceptar siempre", key="approve_always_pending_tool"):
-            st.session_state.allow_write_commands_always = True
-            pending_cwd = Path(
-                st.session_state.pending_tool_request_cwd or st.session_state.command_cwd
-            ).expanduser().resolve()
-            try:
-                tool_result, new_cwd = _execute_tool_request(
-                    workspace_root=workspace_root,
-                    command_cwd=pending_cwd,
-                    tool_request=pending_tool_obj,
-                )
-                st.session_state.command_cwd = str(new_cwd)
-                _add_system_context(
-                    f"Resultado de tool aprobada en modo 'siempre' (cwd: `{new_cwd}`):\n\n"
-                    f"{tool_result}"
-                )
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"```text\n{tool_result}\n```"}
-                )
-            except ValueError as exc:
-                st.session_state.messages.append(
-                    {"role": "assistant", "content": f"Error ejecutando tool: {exc}"}
-                )
-            st.session_state.pending_tool_request = ""
-            st.session_state.pending_tool_request_cwd = ""
-            st.rerun()
-
         if reject_col.button("Rechazar", key="reject_pending_command"):
             st.session_state.messages.append(
                 {"role": "assistant", "content": "Comando rechazado por el usuario."}
@@ -964,7 +1744,6 @@ def main() -> None:
             st.session_state.pending_command = ""
             st.session_state.pending_command_cwd = ""
             st.rerun()
-
         if always_col.button("Aceptar siempre", key="approve_always_pending_command"):
             st.session_state.allow_write_commands_always = True
             pending_cwd = Path(
@@ -991,6 +1770,131 @@ def main() -> None:
             st.session_state.pending_command = ""
             st.session_state.pending_command_cwd = ""
             st.rerun()
+    if st.session_state.pending_tool_request:
+        st.warning("Hay una acción pendiente solicitada por la IA que puede escribir/editar archivos.")
+        pending_tool_obj = json.loads(st.session_state.pending_tool_request)
+        st.code(_format_tool_request_for_user(pending_tool_obj), language="text")
+        approve_tool_col, reject_tool_col, always_tool_col = st.columns(3)
+
+        if approve_tool_col.button("Aceptar", key="approve_pending_tool"):
+            pending_cwd = Path(
+                st.session_state.pending_tool_request_cwd or st.session_state.command_cwd
+            ).expanduser().resolve()
+            should_resume_agent = bool(st.session_state.pending_agent_loop)
+            try:
+                tool_result, new_cwd = _execute_tool_request(
+                    workspace_root=workspace_root,
+                    command_cwd=pending_cwd,
+                    tool_request=pending_tool_obj,
+                )
+                st.session_state.command_cwd = str(new_cwd)
+                _add_system_context(
+                    _build_tool_observation(
+                        tool_request=pending_tool_obj,
+                        tool_result=tool_result,
+                        step=None,
+                    )
+                )
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"```text\n{tool_result}\n```"}
+                )
+                st.session_state.pending_tool_request = ""
+                st.session_state.pending_tool_request_cwd = ""
+                st.session_state.pending_agent_loop = False
+                if should_resume_agent:
+                    loop_result = _run_agent_reasoning_loop(
+                        client=client,
+                        model=model,
+                        temperature=temperature,
+                        workspace_root=workspace_root,
+                        command_cwd=new_cwd,
+                        user_prompt="",
+                    )
+                    st.session_state.command_cwd = str(loop_result["new_cwd"])
+                    st.session_state.last_agent_trace = list(loop_result.get("trace_lines", []))
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": loop_result["assistant_content"]}
+                    )
+            except ValueError as exc:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Error ejecutando tool: {exc}"}
+                )
+                st.session_state.pending_tool_request = ""
+                st.session_state.pending_tool_request_cwd = ""
+                st.session_state.pending_agent_loop = False
+            except OllamaClientError as exc:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Error reanudando el agente: {exc}"}
+                )
+                st.session_state.pending_tool_request = ""
+                st.session_state.pending_tool_request_cwd = ""
+                st.session_state.pending_agent_loop = False
+            st.rerun()
+
+        if reject_tool_col.button("Rechazar", key="reject_pending_tool"):
+            st.session_state.messages.append(
+                {"role": "assistant", "content": "Acción de tool rechazada por el usuario."}
+            )
+            st.session_state.pending_tool_request = ""
+            st.session_state.pending_tool_request_cwd = ""
+            st.session_state.pending_agent_loop = False
+            st.rerun()
+
+        if always_tool_col.button("Aceptar siempre", key="approve_always_pending_tool"):
+            st.session_state.allow_write_commands_always = True
+            pending_cwd = Path(
+                st.session_state.pending_tool_request_cwd or st.session_state.command_cwd
+            ).expanduser().resolve()
+            should_resume_agent = bool(st.session_state.pending_agent_loop)
+            try:
+                tool_result, new_cwd = _execute_tool_request(
+                    workspace_root=workspace_root,
+                    command_cwd=pending_cwd,
+                    tool_request=pending_tool_obj,
+                )
+                st.session_state.command_cwd = str(new_cwd)
+                _add_system_context(
+                    _build_tool_observation(
+                        tool_request=pending_tool_obj,
+                        tool_result=tool_result,
+                        step=None,
+                    )
+                )
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"```text\n{tool_result}\n```"}
+                )
+                st.session_state.pending_tool_request = ""
+                st.session_state.pending_tool_request_cwd = ""
+                st.session_state.pending_agent_loop = False
+                if should_resume_agent:
+                    loop_result = _run_agent_reasoning_loop(
+                        client=client,
+                        model=model,
+                        temperature=temperature,
+                        workspace_root=workspace_root,
+                        command_cwd=new_cwd,
+                        user_prompt="",
+                    )
+                    st.session_state.command_cwd = str(loop_result["new_cwd"])
+                    st.session_state.last_agent_trace = list(loop_result.get("trace_lines", []))
+                    st.session_state.messages.append(
+                        {"role": "assistant", "content": loop_result["assistant_content"]}
+                    )
+            except ValueError as exc:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Error ejecutando tool: {exc}"}
+                )
+                st.session_state.pending_tool_request = ""
+                st.session_state.pending_tool_request_cwd = ""
+                st.session_state.pending_agent_loop = False
+            except OllamaClientError as exc:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Error reanudando el agente: {exc}"}
+                )
+                st.session_state.pending_tool_request = ""
+                st.session_state.pending_tool_request_cwd = ""
+                st.session_state.pending_agent_loop = False
+            st.rerun()
 
     user_prompt = st.chat_input(f"Escribe tu mensaje... (o {CHAT_COMMAND_PREFIX} <comando>)")
     if not user_prompt:
@@ -1004,6 +1908,7 @@ def main() -> None:
 
     if chat_command:
         st.session_state.last_rag_sources = []
+        st.session_state.last_agent_trace = []
         command_user_content = f"🛠️ Ejecutar comando en workspace: `{chat_command}`"
         st.session_state.messages.append({"role": "user", "content": command_user_content})
         with st.chat_message("user"):
@@ -1065,99 +1970,32 @@ def main() -> None:
             st.caption(f"Adjuntos: {', '.join(attachments)}")
         if ignored_files:
             st.warning("No se enviaron algunos archivos:\n- " + "\n- ".join(ignored_files))
-    model_messages = [{"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT}, *st.session_state.messages]
-
-    assistant_chunks: List[str] = []
     with st.chat_message("assistant"):
         placeholder = st.empty()
+        placeholder.markdown("🧠 Ejecutando ciclo del agente...")
         try:
-            for chunk in client.chat_stream(
+            loop_result = _run_agent_reasoning_loop(
+                client=client,
                 model=model,
-                messages=model_messages,
-                options={"temperature": temperature},
-            ):
-                assistant_chunks.append(chunk)
-                placeholder.markdown("".join(assistant_chunks))
+                temperature=temperature,
+                workspace_root=workspace_root,
+                command_cwd=command_cwd,
+                user_prompt=user_prompt,
+            )
         except OllamaClientError as exc:
             placeholder.error(str(exc))
             return
-        if not "".join(assistant_chunks).strip():
-            retry_messages = [m for m in st.session_state.messages if m.get("role") in {"user", "assistant"}][-10:]
-            retry_messages = [
-                {
-                    "role": "system",
-                    "content": (
-                        "Responde en texto normal y directo. "
-                        "Solo usa JSON de tool cuando realmente necesites ejecutar una acción."
-                    ),
-                },
-                *retry_messages,
-            ]
-            try:
-                for chunk in client.chat_stream(
-                    model=model,
-                    messages=retry_messages,
-                    options={"temperature": temperature},
-                ):
-                    assistant_chunks.append(chunk)
-                    placeholder.markdown("".join(assistant_chunks))
-            except OllamaClientError as exc:
-                placeholder.error(str(exc))
-                return
-    assistant_content = "".join(assistant_chunks)
-    if not assistant_content.strip():
-        assistant_content = (
-            "No recibí contenido del modelo en esta iteración. "
-            "Intenta nuevamente o prueba con una instrucción más específica."
-        )
+
+        st.session_state.command_cwd = str(loop_result["new_cwd"])
+        st.session_state.last_agent_trace = list(loop_result.get("trace_lines", []))
+        assistant_content = str(loop_result["assistant_content"])
+        if loop_result["status"] == "awaiting_approval":
+            placeholder.warning(assistant_content)
+        else:
+            placeholder.markdown(assistant_content)
+
     st.session_state.messages.append({"role": "assistant", "content": assistant_content})
-    tool_request = _extract_tool_request(assistant_content)
-    if tool_request:
-        validation_error = _validate_tool_request(tool_request)
-        if validation_error:
-            st.session_state.messages[-1] = {
-                "role": "assistant",
-                "content": f"❌ Tool request inválida: {validation_error}",
-            }
-            st.rerun()
-            return
-        st.session_state.messages[-1] = {
-            "role": "assistant",
-            "content": f"🔧 Solicitud de herramienta detectada: `{_format_tool_request_for_user(tool_request)}`",
-        }
-        if _is_tool_request_write(tool_request) and not st.session_state.allow_write_commands_always:
-            st.session_state.pending_tool_request = json.dumps(tool_request, ensure_ascii=False)
-            st.session_state.pending_tool_request_cwd = str(command_cwd)
-            st.session_state.messages.append(
-                {
-                    "role": "assistant",
-                    "content": (
-                        "La IA solicitó una acción con posible escritura/edición y requiere aprobación. "
-                        "Usa los botones: Aceptar, Rechazar o Aceptar siempre."
-                    ),
-                }
-            )
-            st.rerun()
-            return
-        try:
-            tool_result, new_cwd = _execute_tool_request(
-                workspace_root=workspace_root,
-                command_cwd=command_cwd,
-                tool_request=tool_request,
-            )
-            st.session_state.command_cwd = str(new_cwd)
-            _add_system_context(
-                "Resultado de tool ejecutada automáticamente:\n"
-                f"- Solicitud: {_format_tool_request_for_user(tool_request)}\n\n"
-                f"{tool_result}"
-            )
-            st.session_state.messages.append(
-                {"role": "assistant", "content": f"```text\n{tool_result}\n```"}
-            )
-        except ValueError as exc:
-            st.session_state.messages.append(
-                {"role": "assistant", "content": f"Error ejecutando tool solicitada por la IA: {exc}"}
-            )
+    if loop_result["status"] == "awaiting_approval":
         st.rerun()
         return
     st.session_state.uploader_key += 1
