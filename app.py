@@ -1,5 +1,6 @@
 import base64
 import os
+import shlex
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List
@@ -21,6 +22,44 @@ MAX_READ_CHARS = 30000
 MAX_COMMAND_OUTPUT_CHARS = 30000
 COMMAND_TIMEOUT_SECONDS = 30
 CHAT_COMMAND_PREFIX = "/cmd"
+MAX_AUTOCONTEXT_ENTRIES = 60
+WRITE_COMMAND_PREFIXES = {
+    "rm",
+    "mv",
+    "cp",
+    "touch",
+    "mkdir",
+    "rmdir",
+    "chmod",
+    "chown",
+    "ln",
+    "tee",
+    "truncate",
+    "dd",
+    "sed",
+    "awk",
+    "perl",
+}
+WRITE_COMMAND_OPERATORS = (">", ">>", "| tee", "sed -i")
+WRITE_GIT_SUBCOMMANDS = {
+    "add",
+    "apply",
+    "am",
+    "branch",
+    "checkout",
+    "cherry-pick",
+    "clean",
+    "commit",
+    "merge",
+    "push",
+    "rebase",
+    "reset",
+    "revert",
+    "rm",
+    "stash",
+    "switch",
+    "tag",
+}
 
 
 def init_state() -> None:
@@ -34,6 +73,14 @@ def init_state() -> None:
         st.session_state.uploader_key = 0
     if "workspace_root" not in st.session_state:
         st.session_state.workspace_root = DEFAULT_WORKSPACE_ROOT
+    if "command_cwd" not in st.session_state:
+        st.session_state.command_cwd = DEFAULT_WORKSPACE_ROOT
+    if "allow_write_commands_always" not in st.session_state:
+        st.session_state.allow_write_commands_always = False
+    if "pending_command" not in st.session_state:
+        st.session_state.pending_command = ""
+    if "pending_command_cwd" not in st.session_state:
+        st.session_state.pending_command_cwd = ""
 
 
 def _resolve_workspace_root(root_text: str) -> Path:
@@ -47,6 +94,21 @@ def _safe_resolve_path(workspace_root: Path, target: str) -> Path:
     target_path = Path(target).expanduser()
     if not target_path.is_absolute():
         target_path = workspace_root / target_path
+
+    resolved = target_path.resolve()
+    workspace = workspace_root.resolve()
+    if os.path.commonpath([str(workspace), str(resolved)]) != str(workspace):
+        raise ValueError("Ruta fuera del workspace permitido.")
+    return resolved
+
+
+def _safe_resolve_path_from(workspace_root: Path, base_dir: Path, target: str) -> Path:
+    if not target.strip():
+        target = "."
+
+    target_path = Path(target).expanduser()
+    if not target_path.is_absolute():
+        target_path = base_dir / target_path
 
     resolved = target_path.resolve()
     workspace = workspace_root.resolve()
@@ -125,8 +187,7 @@ def _write_text_file(workspace_root: Path, target: str, content: str, append: bo
 def _add_system_context(context: str) -> None:
     st.session_state.messages.append({"role": "system", "content": context})
 
-
-def _run_workspace_command(workspace_root: Path, command: str) -> str:
+def _run_workspace_command(command_cwd: Path, command: str) -> str:
     if not command.strip():
         raise ValueError("Debes indicar un comando.")
 
@@ -134,7 +195,7 @@ def _run_workspace_command(workspace_root: Path, command: str) -> str:
         result = subprocess.run(
             command,
             shell=True,
-            cwd=workspace_root,
+            cwd=command_cwd,
             capture_output=True,
             text=True,
             timeout=COMMAND_TIMEOUT_SECONDS,
@@ -148,6 +209,7 @@ def _run_workspace_command(workspace_root: Path, command: str) -> str:
     stdout = (result.stdout or "").strip()
     stderr = (result.stderr or "").strip()
     combined = (
+        f"CWD: {command_cwd}\n"
         f"Comando: {command}\n"
         f"Exit code: {result.returncode}\n\n"
         f"STDOUT:\n{stdout or '[vacío]'}\n\n"
@@ -186,6 +248,86 @@ def _parse_chat_command(prompt: str) -> str | None:
     if not command:
         raise ValueError("Debes indicar un comando luego de /cmd.")
     return command
+
+
+def _ensure_command_cwd(workspace_root: Path) -> Path:
+    candidate = Path(st.session_state.command_cwd).expanduser().resolve()
+    workspace = workspace_root.resolve()
+    if not candidate.exists() or not candidate.is_dir():
+        st.session_state.command_cwd = str(workspace)
+        return workspace
+    if os.path.commonpath([str(workspace), str(candidate)]) != str(workspace):
+        st.session_state.command_cwd = str(workspace)
+        return workspace
+    return candidate
+
+
+def _relative_path_label(workspace_root: Path, target: Path) -> str:
+    if target.resolve() == workspace_root.resolve():
+        return "."
+    return str(target.resolve().relative_to(workspace_root.resolve()))
+
+
+def _execute_workspace_command_with_cd(
+    workspace_root: Path, command_cwd: Path, command: str
+) -> tuple[str, Path]:
+    stripped = command.strip()
+    try:
+        tokens = shlex.split(stripped)
+    except ValueError as exc:
+        raise ValueError(f"Comando inválido: {exc}") from exc
+
+    if tokens and tokens[0] == "cd":
+        target = tokens[1] if len(tokens) > 1 else "."
+        new_cwd = _safe_resolve_path_from(workspace_root, command_cwd, target)
+        if not new_cwd.exists() or not new_cwd.is_dir():
+            raise ValueError("La ruta indicada no existe o no es una carpeta.")
+        rel = _relative_path_label(workspace_root, new_cwd)
+        return f"CWD actualizado a `{rel}` ({new_cwd})", new_cwd
+
+    result = _run_workspace_command(command_cwd=command_cwd, command=command)
+    return result, command_cwd
+
+
+def _build_workspace_context(workspace_root: Path, command_cwd: Path) -> str:
+    rel = _relative_path_label(workspace_root, command_cwd)
+    entries: List[str] = []
+    for path in command_cwd.glob("*"):
+        suffix = "/" if path.is_dir() else ""
+        entries.append(f"{path.name}{suffix}")
+        if len(entries) >= MAX_AUTOCONTEXT_ENTRIES:
+            break
+
+    entries_text = "\n".join(f"- {entry}" for entry in entries) if entries else "- [vacío]"
+    return (
+        "Contexto automático de workspace:\n"
+        f"- Workspace root: {workspace_root}\n"
+        f"- Directorio actual: {command_cwd} (relativo: {rel})\n"
+        f"- Entradas en directorio actual (hasta {MAX_AUTOCONTEXT_ENTRIES}):\n"
+        f"{entries_text}"
+    )
+
+
+def _is_write_or_edit_command(command: str) -> bool:
+    normalized = command.strip().lower()
+    if any(operator in normalized for operator in WRITE_COMMAND_OPERATORS):
+        return True
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return True
+    if not tokens:
+        return False
+
+    first = tokens[0].lower()
+    if first == "cd":
+        return False
+    if first in WRITE_COMMAND_PREFIXES:
+        return True
+    if first == "git" and len(tokens) > 1 and tokens[1].lower() in WRITE_GIT_SUBCOMMANDS:
+        return True
+    return False
 
 
 def build_user_message(
@@ -312,63 +454,10 @@ def main() -> None:
             if attachments:
                 st.caption(f"Adjuntos: {', '.join(attachments)}")
 
-    st.subheader("Herramientas de archivos")
     workspace_root = _resolve_workspace_root(st.session_state.workspace_root)
+    command_cwd = _ensure_command_cwd(workspace_root)
     st.caption(f"Workspace activo: `{workspace_root}`")
-
-    scan_col, read_col = st.columns(2)
-    with scan_col:
-        st.markdown("**Escanear carpeta**")
-        scan_target = st.text_input("Ruta a escanear", value=".", key="scan_target")
-        scan_recursive = st.checkbox("Recursivo", value=True, key="scan_recursive")
-        if st.button("Escanear", key="scan_btn"):
-            try:
-                scan_result = _scan_directory(workspace_root, scan_target, scan_recursive)
-                _add_system_context(scan_result)
-                st.success("Resultado de escaneo agregado al contexto del chat.")
-                st.code(scan_result, language="text")
-            except ValueError as exc:
-                st.error(str(exc))
-
-    with read_col:
-        st.markdown("**Leer archivo**")
-        read_target = st.text_input("Ruta de archivo a leer", value="", key="read_target")
-        if st.button("Leer", key="read_btn"):
-            try:
-                read_result = _read_text_file(workspace_root, read_target)
-                _add_system_context(read_result)
-                st.success("Contenido agregado al contexto del chat.")
-                st.code(read_result, language="text")
-            except ValueError as exc:
-                st.error(str(exc))
-
-    st.markdown("**Escribir archivo**")
-    write_target = st.text_input("Ruta de archivo a escribir", value="", key="write_target")
-    write_append = st.checkbox("Append (agregar al final)", value=False, key="write_append")
-    write_content = st.text_area("Contenido a escribir", value="", height=150, key="write_content")
-    if st.button("Escribir archivo", key="write_btn"):
-        try:
-            write_result = _write_text_file(workspace_root, write_target, write_content, write_append)
-            _add_system_context(write_result)
-            st.success("Escritura completada y registrada en el contexto del chat.")
-        except ValueError as exc:
-            st.error(str(exc))
-
-    st.markdown("**Ejecutar comando en workspace**")
-    command_text = st.text_input(
-        "Comando",
-        value="",
-        key="command_text",
-        help="Se ejecuta dentro del Workspace root y su salida se agrega al contexto del chat.",
-    )
-    if st.button("Ejecutar comando", key="run_command_btn"):
-        try:
-            command_result = _run_workspace_command(workspace_root, command_text)
-            _add_system_context(command_result)
-            st.success("Resultado del comando agregado al contexto del chat.")
-            st.code(command_result, language="text")
-        except ValueError as exc:
-            st.error(str(exc))
+    st.caption(f"Directorio actual para comandos: `{command_cwd}`")
     st.subheader("Adjuntar archivos")
     uploaded_files = st.file_uploader(
         "Adjuntar archivos al próximo mensaje",
@@ -401,6 +490,76 @@ def main() -> None:
             st.caption("Previsualización de imágenes:")
             for image_file in image_files:
                 st.image(image_file, caption=image_file.name, width=220)
+    st.caption(
+        "Ruta activa en chat: "
+        f"`{command_cwd}` (relativa al workspace: `{_relative_path_label(workspace_root, command_cwd)}`)"
+    )
+    if st.session_state.pending_command:
+        st.warning(
+            "Hay un comando pendiente que puede escribir/editar archivos:\n"
+            f"`{st.session_state.pending_command}`"
+        )
+        approve_col, reject_col, always_col = st.columns(3)
+        if approve_col.button("Aceptar", key="approve_pending_command"):
+            pending_cwd = Path(
+                st.session_state.pending_command_cwd or st.session_state.command_cwd
+            ).expanduser().resolve()
+            try:
+                command_result, new_cwd = _execute_workspace_command_with_cd(
+                    workspace_root=workspace_root,
+                    command_cwd=pending_cwd,
+                    command=st.session_state.pending_command,
+                )
+                st.session_state.command_cwd = str(new_cwd)
+                _add_system_context(
+                    f"Resultado de comando aprobado por usuario (cwd: `{new_cwd}`):\n\n"
+                    f"{command_result}"
+                )
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"```text\n{command_result}\n```"}
+                )
+            except ValueError as exc:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Error ejecutando comando: {exc}"}
+                )
+            st.session_state.pending_command = ""
+            st.session_state.pending_command_cwd = ""
+            st.rerun()
+
+        if reject_col.button("Rechazar", key="reject_pending_command"):
+            st.session_state.messages.append(
+                {"role": "assistant", "content": "Comando rechazado por el usuario."}
+            )
+            st.session_state.pending_command = ""
+            st.session_state.pending_command_cwd = ""
+            st.rerun()
+
+        if always_col.button("Aceptar siempre", key="approve_always_pending_command"):
+            st.session_state.allow_write_commands_always = True
+            pending_cwd = Path(
+                st.session_state.pending_command_cwd or st.session_state.command_cwd
+            ).expanduser().resolve()
+            try:
+                command_result, new_cwd = _execute_workspace_command_with_cd(
+                    workspace_root=workspace_root,
+                    command_cwd=pending_cwd,
+                    command=st.session_state.pending_command,
+                )
+                st.session_state.command_cwd = str(new_cwd)
+                _add_system_context(
+                    f"Resultado de comando aprobado en modo 'siempre' (cwd: `{new_cwd}`):\n\n"
+                    f"{command_result}"
+                )
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"```text\n{command_result}\n```"}
+                )
+            except ValueError as exc:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Error ejecutando comando: {exc}"}
+                )
+            st.session_state.pending_command = ""
+            st.session_state.pending_command_cwd = ""
+            st.rerun()
 
     user_prompt = st.chat_input(f"Escribe tu mensaje... (o {CHAT_COMMAND_PREFIX} <comando>)")
     if not user_prompt:
@@ -418,12 +577,33 @@ def main() -> None:
         with st.chat_message("user"):
             st.markdown(command_user_content)
 
+        if _is_write_or_edit_command(chat_command) and not st.session_state.allow_write_commands_always:
+            st.session_state.pending_command = chat_command
+            st.session_state.pending_command_cwd = str(command_cwd)
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "Este comando puede escribir/editar archivos y requiere aprobación. "
+                        "Usa los botones: Aceptar, Rechazar o Aceptar siempre."
+                    ),
+                }
+            )
+            st.rerun()
+            return
+
         with st.chat_message("assistant"):
             placeholder = st.empty()
             try:
-                command_result = _run_workspace_command(workspace_root, chat_command)
+                command_result, new_cwd = _execute_workspace_command_with_cd(
+                    workspace_root=workspace_root,
+                    command_cwd=command_cwd,
+                    command=chat_command,
+                )
+                st.session_state.command_cwd = str(new_cwd)
                 _add_system_context(
-                    f"Resultado de comando en workspace `{workspace_root}`:\n\n{command_result}"
+                    f"Resultado de comando en workspace `{workspace_root}` (cwd: `{new_cwd}`):\n\n"
+                    f"{command_result}"
                 )
                 assistant_content = f"```text\n{command_result}\n```"
                 placeholder.markdown(assistant_content)
@@ -434,6 +614,7 @@ def main() -> None:
         st.session_state.messages.append({"role": "assistant", "content": assistant_content})
         st.rerun()
         return
+    _add_system_context(_build_workspace_context(workspace_root=workspace_root, command_cwd=command_cwd))
 
     user_message, ignored_files = build_user_message(
         prompt=user_prompt,
