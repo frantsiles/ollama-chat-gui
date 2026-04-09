@@ -1,5 +1,7 @@
 import base64
+import json
 import os
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -23,6 +25,12 @@ MAX_COMMAND_OUTPUT_CHARS = 30000
 COMMAND_TIMEOUT_SECONDS = 30
 CHAT_COMMAND_PREFIX = "/cmd"
 MAX_AUTOCONTEXT_ENTRIES = 60
+MAX_RAG_CONTEXT_CHARS = 10000
+MAX_RAG_FILES = 120
+MAX_RAG_FILE_CHARS = 16000
+MAX_RAG_CHUNK_CHARS = 1200
+MAX_RAG_TOP_CHUNKS = 6
+RAG_IGNORED_DIRS = {".git", ".venv", "__pycache__", "node_modules", ".mypy_cache", ".ruff_cache"}
 WRITE_COMMAND_PREFIXES = {
     "rm",
     "mv",
@@ -60,6 +68,15 @@ WRITE_GIT_SUBCOMMANDS = {
     "switch",
     "tag",
 }
+SUPPORTED_TOOL_NAMES = {"run_command", "read_file", "write_file", "create_directory", "list_directory"}
+TOOL_PROTOCOL_SYSTEM_PROMPT = (
+    "Puedes solicitar herramientas del workspace devolviendo JSON (sin texto adicional) con formato "
+    "{\"tool\":\"run_command\",\"args\":{\"command\":\"ls -la\"}}. "
+    "Herramientas permitidas: "
+    "run_command(command), read_file(path), write_file(path, content, append=false), "
+    "create_directory(path), list_directory(path='.', recursive=false). "
+    "Usa herramientas solo cuando sea necesario; cuando no necesites tools, responde normalmente en texto."
+)
 
 
 def init_state() -> None:
@@ -81,6 +98,12 @@ def init_state() -> None:
         st.session_state.pending_command = ""
     if "pending_command_cwd" not in st.session_state:
         st.session_state.pending_command_cwd = ""
+    if "pending_tool_request" not in st.session_state:
+        st.session_state.pending_tool_request = ""
+    if "pending_tool_request_cwd" not in st.session_state:
+        st.session_state.pending_tool_request_cwd = ""
+    if "last_rag_sources" not in st.session_state:
+        st.session_state.last_rag_sources = []
 
 
 def _resolve_workspace_root(root_text: str) -> Path:
@@ -267,11 +290,17 @@ def _relative_path_label(workspace_root: Path, target: Path) -> str:
         return "."
     return str(target.resolve().relative_to(workspace_root.resolve()))
 
+def _normalize_directory_command(command: str) -> str:
+    stripped = command.strip()
+    if stripped in {"c..", "cd.."}:
+        return "cd .."
+    return command
+
 
 def _execute_workspace_command_with_cd(
     workspace_root: Path, command_cwd: Path, command: str
 ) -> tuple[str, Path]:
-    stripped = command.strip()
+    stripped = _normalize_directory_command(command).strip()
     try:
         tokens = shlex.split(stripped)
     except ValueError as exc:
@@ -308,6 +337,128 @@ def _build_workspace_context(workspace_root: Path, command_cwd: Path) -> str:
     )
 
 
+def _is_probably_text_file(path: Path) -> bool:
+    if path.suffix.lower() in TEXT_FILE_EXTENSIONS:
+        return True
+    return path.name.lower() in {"readme", "readme.md", "license", "pyproject.toml", "requirements.txt"}
+
+
+def _chunk_text(text: str, max_chars: int) -> List[str]:
+    chunks: List[str] = []
+    current = ""
+    for paragraph in text.split("\n\n"):
+        paragraph = paragraph.strip()
+        if not paragraph:
+            continue
+        if len(paragraph) > max_chars:
+            if current:
+                chunks.append(current)
+                current = ""
+            for i in range(0, len(paragraph), max_chars):
+                chunks.append(paragraph[i : i + max_chars])
+            continue
+        if not current:
+            current = paragraph
+            continue
+        if len(current) + 2 + len(paragraph) <= max_chars:
+            current = f"{current}\n\n{paragraph}"
+        else:
+            chunks.append(current)
+            current = paragraph
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _tokenize_for_rag(text: str) -> List[str]:
+    return [t for t in re.findall(r"[a-zA-Z0-9_áéíóúñÁÉÍÓÚÑ]{3,}", text.lower())]
+
+
+def _iter_rag_candidate_files(workspace_root: Path) -> List[Path]:
+    files: List[Path] = []
+    for path in workspace_root.rglob("*"):
+        if any(part in RAG_IGNORED_DIRS for part in path.parts):
+            continue
+        if not path.is_file():
+            continue
+        if not _is_probably_text_file(path):
+            continue
+        files.append(path)
+        if len(files) >= MAX_RAG_FILES:
+            break
+    return files
+
+
+def _read_text_file_safely(path: Path, max_chars: int) -> str | None:
+    raw = path.read_bytes()
+    text = None
+    for encoding in ("utf-8", "latin-1"):
+        try:
+            text = raw.decode(encoding)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        return None
+    return text[:max_chars]
+
+
+def _build_local_rag_context(workspace_root: Path, user_prompt: str) -> tuple[str | None, List[str]]:
+    query_tokens = _tokenize_for_rag(user_prompt)
+    if not query_tokens:
+        return None, []
+
+    scored_chunks: List[tuple[int, str, Path]] = []
+    candidate_files = _iter_rag_candidate_files(workspace_root)
+    query_set = set(query_tokens)
+
+    for path in candidate_files:
+        text = _read_text_file_safely(path, max_chars=MAX_RAG_FILE_CHARS)
+        if not text:
+            continue
+        for chunk in _chunk_text(text, max_chars=MAX_RAG_CHUNK_CHARS):
+            chunk_tokens = set(_tokenize_for_rag(chunk))
+            overlap = len(query_set.intersection(chunk_tokens))
+            if overlap <= 0:
+                continue
+            bonus = 2 if path.name.lower().startswith("readme") else 0
+            score = overlap + bonus
+            scored_chunks.append((score, chunk, path))
+
+    if not scored_chunks:
+        return None, []
+
+    scored_chunks.sort(key=lambda item: item[0], reverse=True)
+    top = scored_chunks[:MAX_RAG_TOP_CHUNKS]
+    context_blocks: List[str] = []
+    source_paths: List[str] = []
+    total_chars = 0
+
+    for _, chunk, path in top:
+        rel_path = str(path.relative_to(workspace_root))
+        block = f"[Fuente: {rel_path}]\n{chunk}"
+        projected = total_chars + len(block) + 2
+        if projected > MAX_RAG_CONTEXT_CHARS:
+            break
+        context_blocks.append(block)
+        total_chars = projected
+        if rel_path not in source_paths:
+            source_paths.append(rel_path)
+
+    if not context_blocks:
+        return None, []
+
+    context = "Contexto RAG local recuperado del workspace:\n\n" + "\n\n".join(context_blocks)
+    return context, source_paths
+
+
+def _maybe_add_project_rag_context(workspace_root: Path, user_prompt: str) -> None:
+    rag_context, sources = _build_local_rag_context(workspace_root=workspace_root, user_prompt=user_prompt)
+    st.session_state.last_rag_sources = sources
+    if rag_context:
+        _add_system_context(rag_context)
+
+
 def _is_write_or_edit_command(command: str) -> bool:
     normalized = command.strip().lower()
     if any(operator in normalized for operator in WRITE_COMMAND_OPERATORS):
@@ -328,6 +479,156 @@ def _is_write_or_edit_command(command: str) -> bool:
     if first == "git" and len(tokens) > 1 and tokens[1].lower() in WRITE_GIT_SUBCOMMANDS:
         return True
     return False
+
+def _extract_json_candidate(text: str) -> str | None:
+    stripped = text.strip()
+    if not stripped:
+        return None
+    if stripped.startswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3:
+            fence_header = lines[0].strip().lower()
+            if fence_header.startswith("```json") or fence_header == "```":
+                if lines[-1].strip() == "```":
+                    return "\n".join(lines[1:-1]).strip()
+    if stripped.startswith("{") and stripped.endswith("}"):
+        return stripped
+    return None
+
+
+def _extract_tool_request(assistant_text: str) -> Dict[str, Any] | None:
+    candidate = _extract_json_candidate(assistant_text)
+    if not candidate:
+        return None
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    tool_name = parsed.get("tool")
+    args = parsed.get("args", {})
+    if not isinstance(tool_name, str) or tool_name not in SUPPORTED_TOOL_NAMES:
+        return None
+    if not isinstance(args, dict):
+        return None
+    return {"tool": tool_name, "args": args}
+
+
+def _validate_tool_request(tool_request: Dict[str, Any]) -> str | None:
+    tool_name = tool_request["tool"]
+    args = tool_request["args"]
+
+    if tool_name == "run_command":
+        command = args.get("command")
+        if not isinstance(command, str) or not command.strip():
+            return "run_command requiere `args.command` como string no vacío."
+        return None
+
+    if tool_name == "read_file":
+        path = args.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return "read_file requiere `args.path` como string no vacío."
+        return None
+
+    if tool_name == "write_file":
+        path = args.get("path")
+        content = args.get("content")
+        append = args.get("append", False)
+        if not isinstance(path, str) or not path.strip():
+            return "write_file requiere `args.path` como string no vacío."
+        if not isinstance(content, str):
+            return "write_file requiere `args.content` como string."
+        if not isinstance(append, bool):
+            return "write_file requiere `args.append` como booleano (true/false)."
+        return None
+
+    if tool_name == "create_directory":
+        path = args.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return "create_directory requiere `args.path` como string no vacío."
+        return None
+
+    if tool_name == "list_directory":
+        path = args.get("path", ".")
+        recursive = args.get("recursive", False)
+        if not isinstance(path, str):
+            return "list_directory requiere `args.path` como string."
+        if not isinstance(recursive, bool):
+            return "list_directory requiere `args.recursive` como booleano."
+        return None
+
+    return f"Herramienta no soportada: {tool_name}"
+
+
+def _is_tool_request_write(tool_request: Dict[str, Any]) -> bool:
+    tool_name = tool_request["tool"]
+    args = tool_request["args"]
+    if tool_name in {"write_file", "create_directory"}:
+        return True
+    if tool_name == "run_command":
+        command = str(args.get("command", ""))
+        return _is_write_or_edit_command(command)
+    return False
+
+
+def _format_tool_request_for_user(tool_request: Dict[str, Any]) -> str:
+    tool_name = tool_request["tool"]
+    args = tool_request["args"]
+    return f"{tool_name}({json.dumps(args, ensure_ascii=False)})"
+
+
+def _execute_tool_request(
+    workspace_root: Path, command_cwd: Path, tool_request: Dict[str, Any]
+) -> tuple[str, Path]:
+    tool_name = tool_request["tool"]
+    args = tool_request["args"]
+
+    if tool_name == "run_command":
+        command = str(args.get("command", "")).strip()
+        if not command:
+            raise ValueError("run_command requiere `args.command`.")
+        return _execute_workspace_command_with_cd(
+            workspace_root=workspace_root, command_cwd=command_cwd, command=command
+        )
+
+    if tool_name == "read_file":
+        target = str(args.get("path", "")).strip()
+        if not target:
+            raise ValueError("read_file requiere `args.path`.")
+        result = _read_text_file(workspace_root=workspace_root, target=target)
+        return result, command_cwd
+
+    if tool_name == "write_file":
+        target = str(args.get("path", "")).strip()
+        if not target:
+            raise ValueError("write_file requiere `args.path`.")
+        content = str(args.get("content", ""))
+        append = bool(args.get("append", False))
+        result = _write_text_file(
+            workspace_root=workspace_root,
+            target=target,
+            content=content,
+            append=append,
+        )
+        return result, command_cwd
+
+    if tool_name == "create_directory":
+        target = str(args.get("path", "")).strip()
+        if not target:
+            raise ValueError("create_directory requiere `args.path`.")
+        dir_path = _safe_resolve_path(workspace_root, target)
+        dir_path.mkdir(parents=True, exist_ok=True)
+        rel = dir_path.relative_to(workspace_root)
+        return f"Directorio listo: `{rel}` ({dir_path})", command_cwd
+
+    if tool_name == "list_directory":
+        target = str(args.get("path", ".")).strip() or "."
+        recursive = bool(args.get("recursive", False))
+        result = _scan_directory(workspace_root=workspace_root, target=target, recursive=recursive)
+        return result, command_cwd
+
+    raise ValueError(f"Herramienta no soportada: {tool_name}")
 
 
 def build_user_message(
@@ -448,8 +749,11 @@ def main() -> None:
     for msg in st.session_state.messages:
         if msg["role"] not in {"user", "assistant"}:
             continue
+        content = str(msg.get("content", ""))
+        if msg["role"] == "assistant" and not content.strip():
+            continue
         with st.chat_message(msg["role"]):
-            st.markdown(msg["content"])
+            st.markdown(content)
             attachments = msg.get("attachments", [])
             if attachments:
                 st.caption(f"Adjuntos: {', '.join(attachments)}")
@@ -494,6 +798,8 @@ def main() -> None:
         "Ruta activa en chat: "
         f"`{command_cwd}` (relativa al workspace: `{_relative_path_label(workspace_root, command_cwd)}`)"
     )
+    if st.session_state.last_rag_sources:
+        st.caption("Fuentes RAG usadas (última respuesta): " + ", ".join(st.session_state.last_rag_sources))
     if st.session_state.pending_command:
         st.warning(
             "Hay un comando pendiente que puede escribir/editar archivos:\n"
@@ -524,6 +830,71 @@ def main() -> None:
                 )
             st.session_state.pending_command = ""
             st.session_state.pending_command_cwd = ""
+            st.rerun()
+    if st.session_state.pending_tool_request:
+        st.warning("Hay una acción pendiente solicitada por la IA que puede escribir/editar archivos.")
+        pending_tool_obj = json.loads(st.session_state.pending_tool_request)
+        st.code(_format_tool_request_for_user(pending_tool_obj), language="text")
+        approve_tool_col, reject_tool_col, always_tool_col = st.columns(3)
+
+        if approve_tool_col.button("Aceptar", key="approve_pending_tool"):
+            pending_cwd = Path(
+                st.session_state.pending_tool_request_cwd or st.session_state.command_cwd
+            ).expanduser().resolve()
+            try:
+                tool_result, new_cwd = _execute_tool_request(
+                    workspace_root=workspace_root,
+                    command_cwd=pending_cwd,
+                    tool_request=pending_tool_obj,
+                )
+                st.session_state.command_cwd = str(new_cwd)
+                _add_system_context(
+                    f"Resultado de tool aprobada por usuario (cwd: `{new_cwd}`):\n\n{tool_result}"
+                )
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"```text\n{tool_result}\n```"}
+                )
+            except ValueError as exc:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Error ejecutando tool: {exc}"}
+                )
+            st.session_state.pending_tool_request = ""
+            st.session_state.pending_tool_request_cwd = ""
+            st.rerun()
+
+        if reject_tool_col.button("Rechazar", key="reject_pending_tool"):
+            st.session_state.messages.append(
+                {"role": "assistant", "content": "Acción de tool rechazada por el usuario."}
+            )
+            st.session_state.pending_tool_request = ""
+            st.session_state.pending_tool_request_cwd = ""
+            st.rerun()
+
+        if always_tool_col.button("Aceptar siempre", key="approve_always_pending_tool"):
+            st.session_state.allow_write_commands_always = True
+            pending_cwd = Path(
+                st.session_state.pending_tool_request_cwd or st.session_state.command_cwd
+            ).expanduser().resolve()
+            try:
+                tool_result, new_cwd = _execute_tool_request(
+                    workspace_root=workspace_root,
+                    command_cwd=pending_cwd,
+                    tool_request=pending_tool_obj,
+                )
+                st.session_state.command_cwd = str(new_cwd)
+                _add_system_context(
+                    f"Resultado de tool aprobada en modo 'siempre' (cwd: `{new_cwd}`):\n\n"
+                    f"{tool_result}"
+                )
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"```text\n{tool_result}\n```"}
+                )
+            except ValueError as exc:
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": f"Error ejecutando tool: {exc}"}
+                )
+            st.session_state.pending_tool_request = ""
+            st.session_state.pending_tool_request_cwd = ""
             st.rerun()
 
         if reject_col.button("Rechazar", key="reject_pending_command"):
@@ -572,6 +943,7 @@ def main() -> None:
         return
 
     if chat_command:
+        st.session_state.last_rag_sources = []
         command_user_content = f"🛠️ Ejecutar comando en workspace: `{chat_command}`"
         st.session_state.messages.append({"role": "user", "content": command_user_content})
         with st.chat_message("user"):
@@ -615,6 +987,7 @@ def main() -> None:
         st.rerun()
         return
     _add_system_context(_build_workspace_context(workspace_root=workspace_root, command_cwd=command_cwd))
+    _maybe_add_project_rag_context(workspace_root=workspace_root, user_prompt=user_prompt)
 
     user_message, ignored_files = build_user_message(
         prompt=user_prompt,
@@ -631,6 +1004,7 @@ def main() -> None:
             st.caption(f"Adjuntos: {', '.join(attachments)}")
         if ignored_files:
             st.warning("No se enviaron algunos archivos:\n- " + "\n- ".join(ignored_files))
+    model_messages = [{"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT}, *st.session_state.messages]
 
     assistant_chunks: List[str] = []
     with st.chat_message("assistant"):
@@ -638,7 +1012,7 @@ def main() -> None:
         try:
             for chunk in client.chat_stream(
                 model=model,
-                messages=st.session_state.messages,
+                messages=model_messages,
                 options={"temperature": temperature},
             ):
                 assistant_chunks.append(chunk)
@@ -646,8 +1020,62 @@ def main() -> None:
         except OllamaClientError as exc:
             placeholder.error(str(exc))
             return
-
-    st.session_state.messages.append({"role": "assistant", "content": "".join(assistant_chunks)})
+    assistant_content = "".join(assistant_chunks)
+    if not assistant_content.strip():
+        assistant_content = (
+            "No recibí contenido del modelo en esta iteración. "
+            "Intenta nuevamente o prueba con una instrucción más específica."
+        )
+    st.session_state.messages.append({"role": "assistant", "content": assistant_content})
+    tool_request = _extract_tool_request(assistant_content)
+    if tool_request:
+        validation_error = _validate_tool_request(tool_request)
+        if validation_error:
+            st.session_state.messages[-1] = {
+                "role": "assistant",
+                "content": f"❌ Tool request inválida: {validation_error}",
+            }
+            st.rerun()
+            return
+        st.session_state.messages[-1] = {
+            "role": "assistant",
+            "content": f"🔧 Solicitud de herramienta detectada: `{_format_tool_request_for_user(tool_request)}`",
+        }
+        if _is_tool_request_write(tool_request) and not st.session_state.allow_write_commands_always:
+            st.session_state.pending_tool_request = json.dumps(tool_request, ensure_ascii=False)
+            st.session_state.pending_tool_request_cwd = str(command_cwd)
+            st.session_state.messages.append(
+                {
+                    "role": "assistant",
+                    "content": (
+                        "La IA solicitó una acción con posible escritura/edición y requiere aprobación. "
+                        "Usa los botones: Aceptar, Rechazar o Aceptar siempre."
+                    ),
+                }
+            )
+            st.rerun()
+            return
+        try:
+            tool_result, new_cwd = _execute_tool_request(
+                workspace_root=workspace_root,
+                command_cwd=command_cwd,
+                tool_request=tool_request,
+            )
+            st.session_state.command_cwd = str(new_cwd)
+            _add_system_context(
+                "Resultado de tool ejecutada automáticamente:\n"
+                f"- Solicitud: {_format_tool_request_for_user(tool_request)}\n\n"
+                f"{tool_result}"
+            )
+            st.session_state.messages.append(
+                {"role": "assistant", "content": f"```text\n{tool_result}\n```"}
+            )
+        except ValueError as exc:
+            st.session_state.messages.append(
+                {"role": "assistant", "content": f"Error ejecutando tool solicitada por la IA: {exc}"}
+            )
+        st.rerun()
+        return
     st.session_state.uploader_key += 1
     st.rerun()
 
