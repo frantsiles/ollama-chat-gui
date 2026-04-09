@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Set
 
 import requests
 
@@ -28,10 +28,24 @@ class OllamaClient:
         data = response.json()
         return [item["name"] for item in data.get("models", []) if "name" in item]
 
+    def get_model_capabilities(self, model: str) -> Set[str]:
+        if not model:
+            return set()
+
+        url = f"{self.base_url}/api/show"
+        try:
+            response = requests.post(url, json={"model": model}, timeout=self.timeout)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise OllamaClientError("No se pudieron consultar las capacidades del modelo.") from exc
+
+        data = response.json()
+        return set(data.get("capabilities", []))
+
     def chat_stream(
         self,
         model: str,
-        messages: List[Dict[str, str]],
+        messages: List[Dict[str, Any]],
         options: Dict[str, float] | None = None,
     ) -> Iterable[str]:
         if not model:

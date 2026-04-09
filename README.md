@@ -28,6 +28,25 @@ streamlit run app.py
 ```
 3. Abre el navegador en la URL que Streamlit muestre (normalmente `http://localhost:8501`).
 
+## Ejecución rápida
+También puedes iniciar todo con:
+```bash
+./run.sh
+```
+
+## Adjuntos y multimodal
+- En el área principal del chat puedes adjuntar archivos para el próximo mensaje.
+- Imágenes (`png`, `jpg`, `jpeg`, `webp`, `gif`) se envían como multimodal cuando el modelo soporta `vision`.
+- Archivos de texto (`txt`, `md`, `json`, `csv`, `xml`, `yaml`, `yml`, `py`, `log`) se inyectan como contexto en el prompt.
+- Tamaño máximo por archivo: `8 MB`.
+
+## Calidad de código (local)
+```bash
+pip install ruff
+ruff check .
+python -m py_compile app.py ollama_client.py
+```
+
 ## Variables de entorno (opcional)
 Puedes crear tu `.env` basado en `.env.example`:
 - `OLLAMA_BASE_URL` (default: `http://localhost:11434`)
@@ -48,3 +67,6 @@ git push -u origin main
 - Múltiples conversaciones
 - Perfiles de parámetros por modelo
 - Exportar/importar chats
+
+## Transparencia
+Este proyecto fue desarrollado con apoyo de IA (Oz en Warp) para acelerar diseño, implementación y documentación. Las decisiones finales, validación y publicación se mantienen bajo control del autor del repositorio.
