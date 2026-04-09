@@ -1,4 +1,6 @@
 # Ollama Chat GUI
+[![CI](https://github.com/frantsiles/ollama-chat-gui/actions/workflows/ci.yml/badge.svg)](https://github.com/frantsiles/ollama-chat-gui/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/github/license/frantsiles/ollama-chat-gui)](LICENSE)
 Aplicación gráfica local para chatear con modelos de Ollama usando Streamlit.
 
 ## Objetivo
