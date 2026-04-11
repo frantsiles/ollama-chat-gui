@@ -70,8 +70,12 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     """Evento de inicio."""
+    from config import PERSISTENCE_DB_PATH
+    from web.state import SessionManager
+    SessionManager.init_persistence(PERSISTENCE_DB_PATH)
     print("🚀 Ollama Chat GUI started")
     print(f"📁 Static files: {STATIC_DIR}")
+    print(f"💾 Persistence DB: {PERSISTENCE_DB_PATH}")
 
 
 @app.on_event("shutdown")

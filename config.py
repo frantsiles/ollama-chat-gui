@@ -65,6 +65,17 @@ MAX_ATTACHMENT_CHARS_TOTAL = 8000
 MAX_ATTACHMENT_CHARS_PER_FILE = 4000
 
 # =============================================================================
+# Persistence
+# =============================================================================
+from pathlib import Path as _Path
+PERSISTENCE_DB_PATH = _Path(
+    os.getenv(
+        "CHAT_DB_PATH",
+        os.path.join(os.path.expanduser("~"), ".local", "share", "ollama-chat-gui", "sessions.db"),
+    )
+)
+
+# =============================================================================
 # RAG Configuration
 # =============================================================================
 MAX_AUTOCONTEXT_ENTRIES = 60

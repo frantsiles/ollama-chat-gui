@@ -30,6 +30,7 @@ from core.models import Conversation, Plan, PlanStatus, ToolCall
 from core.planner import PlanManager
 from llm.client import OllamaClient, OllamaClientError
 from web.state import Session, SessionManager
+from pathlib import Path as _Path  # re-export para evitar shadowing
 
 
 class ConnectionManager:
@@ -269,6 +270,9 @@ async def handle_chat_message(
             "type": "error",
             "message": f"Error interno: {str(e)}",
         })
+    finally:
+        # Persistir sesión tras cada request (incluso si hubo error)
+        SessionManager.save(session)
 
 
 async def handle_approval(
@@ -317,9 +321,9 @@ async def handle_approval(
             session.conversation,
             approved,
         )
-        
+
         session.pending_approval = None
-        
+
         await websocket.send_json({
             "type": "response",
             "content": response.content,
@@ -327,12 +331,15 @@ async def handle_approval(
             "trace": response.trace,
             "tool_results": [tr.to_dict() for tr in response.tool_results],
         })
-        
+
     except Exception as e:
         await websocket.send_json({
             "type": "error",
             "message": str(e),
         })
+    finally:
+        # Persistir sesión tras cada aprobación
+        SessionManager.save(session)
 
 
 async def handle_plan_action(
