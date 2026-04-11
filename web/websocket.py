@@ -20,7 +20,7 @@ if not logger.handlers:
 
 from config import OLLAMA_BASE_URL, OperationMode
 from core.agent import Agent, AgentResponse
-from core.models import Conversation, Plan, PlanStatus
+from core.models import Conversation, Plan, PlanStatus, ToolCall
 from core.planner import PlanManager
 from llm.client import OllamaClient, OllamaClientError
 from web.state import Session, SessionManager
@@ -80,6 +80,7 @@ async def handle_chat_message(
         temperature=session.temperature,
         mode=session.mode,
     )
+    agent.approval_manager.set_level(session.approval_level)
     
     # Notificar inicio
     await websocket.send_json({
@@ -145,8 +146,10 @@ async def handle_chat_message(
         
         # Manejar aprobación pendiente
         if response.status == "awaiting_approval":
+            pending_tool = agent.state.pending_approval
             session.pending_approval = {
-                "tool_call": str(agent.state.pending_approval),
+                "tool_call": str(pending_tool) if pending_tool else "",
+                "tool_call_data": pending_tool.to_dict() if pending_tool else None,
                 "description": response.content,
             }
             await websocket.send_json({
@@ -194,6 +197,20 @@ async def handle_approval(
         temperature=session.temperature,
         mode=session.mode,
     )
+    
+    agent.approval_manager.set_level(session.approval_level)
+    
+    pending_tool_data = session.pending_approval.get("tool_call_data")
+    if not pending_tool_data:
+        await websocket.send_json({
+            "type": "error",
+            "message": "Aprobación pendiente inválida",
+        })
+        return
+    
+    tool_call = ToolCall.from_dict(pending_tool_data)
+    agent.state.pending_approval = tool_call
+    agent.approval_manager.request_approval(tool_call)
     
     try:
         response = await asyncio.to_thread(
@@ -271,6 +288,7 @@ async def handle_plan_action(
             temperature=session.temperature,
             mode=OperationMode.PLAN,
         )
+        agent.approval_manager.set_level(session.approval_level)
         
         try:
             response = await asyncio.to_thread(

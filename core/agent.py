@@ -152,6 +152,20 @@ class Agent:
         )
         conversation.add_system_message(context)
     
+    def _repair_tool_call(self, raw_response: str) -> Optional[ToolCall]:
+        """Intenta reparar una respuesta de tool call malformada."""
+        repair_messages = [
+            {"role": "system", "content": PromptManager.get_tool_repair_prompt()},
+            {"role": "user", "content": raw_response},
+        ]
+        
+        try:
+            repaired = self._call_model(repair_messages)
+        except OllamaClientError:
+            return None
+        
+        return ToolRegistry.extract_tool_call(repaired)
+    
     def chat(
         self,
         user_input: str,
@@ -261,6 +275,10 @@ class Agent:
             
             # Intentar extraer tool call
             tool_call = ToolRegistry.extract_tool_call(response)
+            
+            if not tool_call and ToolRegistry.looks_like_tool_call(response):
+                self.state.add_trace(f"Paso {step}: intentando reparar tool call malformada")
+                tool_call = self._repair_tool_call(response)
             
             if not tool_call:
                 # No hay tool call, es respuesta final
