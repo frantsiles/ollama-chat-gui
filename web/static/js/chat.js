@@ -150,6 +150,10 @@ const Chat = {
             Utils.showToast(data.message || 'Error', 'error');
         });
 
+        wsManager.on('agent_step', (data) => {
+            this.updateTypingStep(data.message);
+        });
+
         wsManager.on('approval_required', (data) => {
             this.showApprovalModal(data.pending);
         });
@@ -304,6 +308,18 @@ const Chat = {
         `;
 
         bodyEl.appendChild(toolEl);
+    },
+
+    /**
+     * Update typing indicator text with current agent step
+     */
+    updateTypingStep(message) {
+        const indicator = document.getElementById('typing-indicator');
+        if (!indicator) return;
+        const span = indicator.querySelector('span');
+        if (span) {
+            span.textContent = message;
+        }
     },
 
     /**

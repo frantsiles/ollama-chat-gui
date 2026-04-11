@@ -6,7 +6,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional
 
-from config import MAX_AGENT_STEPS, OperationMode
+from config import (
+    MAX_AGENT_STEPS,
+    MAX_CONTEXT_MESSAGES,
+    MAX_CONTEXT_MESSAGES_KEEP,
+    OperationMode,
+)
 from core.models import (
     AgentState,
     Conversation,
@@ -80,6 +85,8 @@ class Agent:
         )
         self.approval_manager = ApprovalManager()
         self.state = AgentState(mode=mode)
+        # Running lightweight summary of old conversation turns
+        self._context_summary: str = ""
     
     def set_mode(self, mode: str) -> None:
         """Cambia el modo de operación."""
@@ -113,24 +120,73 @@ class Agent:
                 options={"temperature": self.temperature},
             )
     
+    def _apply_context_window(
+        self,
+        messages: List,
+    ) -> List:
+        """
+        Aplica ventana de contexto:
+        - Si hay pocos mensajes, los devuelve todos.
+        - Si hay muchos, mantiene solo los últimos N y antepone el sumario.
+        """
+        if len(messages) <= MAX_CONTEXT_MESSAGES_KEEP:
+            return list(messages)
+
+        recent = list(messages[-MAX_CONTEXT_MESSAGES_KEEP:])
+
+        if self._context_summary:
+            summary_msg = Message(
+                role=MessageRole.SYSTEM,
+                content=(
+                    "[Contexto resumido de mensajes anteriores]:\n"
+                    + self._context_summary
+                ),
+            )
+            return [summary_msg] + recent
+
+        return recent
+
+    def _build_lightweight_summary(self, messages: List) -> str:
+        """Genera un resumen textual ligero (sin llamada al LLM)."""
+        parts: List[str] = []
+        for msg in messages:
+            if msg.role == MessageRole.USER:
+                snippet = msg.content[:300].replace("\n", " ")
+                parts.append(f"• Usuario: {snippet}")
+            elif msg.role == MessageRole.ASSISTANT:
+                first_line = msg.content.split("\n")[0][:200]
+                parts.append(f"• Asistente: {first_line}")
+            # Omitir mensajes de sistema (workspace ctx, tool results)
+        return "\n".join(parts[-15:])  # Máximo 15 entradas
+
+    def _maybe_summarize(self, conversation: Conversation) -> None:
+        """Actualiza el sumario si la conversación supera el umbral."""
+        if len(conversation.messages) < MAX_CONTEXT_MESSAGES:
+            return
+        old_messages = conversation.messages[:-MAX_CONTEXT_MESSAGES_KEEP]
+        summary = self._build_lightweight_summary(old_messages)
+        if summary:
+            self._context_summary = summary
+
     def _build_messages(
         self,
         conversation: Conversation,
         system_prompt: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Construye la lista de mensajes para el modelo."""
+        """Construye la lista de mensajes para el modelo (con ventana de contexto)."""
         messages = []
-        
+
         # System prompt
         if system_prompt is None:
             system_prompt = PromptManager.get_system_prompt(self.mode)
-        
+
         messages.append({"role": "system", "content": system_prompt})
-        
-        # Mensajes de la conversación
-        for msg in conversation.messages:
+
+        # Mensajes de la conversación con ventana de contexto
+        windowed = self._apply_context_window(conversation.messages)
+        for msg in windowed:
             messages.append(msg.to_ollama_format())
-        
+
         return messages
     
     def _add_workspace_context(self, conversation: Conversation) -> None:
@@ -221,6 +277,7 @@ class Agent:
         conversation: Conversation,
         attachments: Optional[List[str]] = None,
         images: Optional[List[str]] = None,
+        step_callback: Optional[Callable[[str], None]] = None,
     ) -> AgentResponse:
         """
         Modo AGENT: Ciclo ReAct con herramientas.
@@ -237,7 +294,10 @@ class Agent:
         self.state.reset()
         self.state.mode = OperationMode.AGENT
         self.state.is_running = True
-        
+
+        # Comprimir contexto si la conversación es larga
+        self._maybe_summarize(conversation)
+
         # Agregar contexto del workspace
         self._add_workspace_context(conversation)
         
@@ -252,7 +312,10 @@ class Agent:
         
         for step in range(1, MAX_AGENT_STEPS + 1):
             self.state.step_count = step
-            self.state.add_trace(f"Paso {step}: consultando al modelo")
+            trace_consulta = f"Paso {step}: consultando al modelo"
+            self.state.add_trace(trace_consulta)
+            if step_callback:
+                step_callback(trace_consulta)
             
             # Llamar al modelo
             messages = self._build_messages(conversation)
@@ -319,7 +382,10 @@ class Agent:
                 )
             
             # Ejecutar tool
-            self.state.add_trace(f"Paso {step}: ejecutando {tool_call}")
+            trace_exec = f"Paso {step}: ejecutando {tool_call.tool}"
+            self.state.add_trace(trace_exec)
+            if step_callback:
+                step_callback(trace_exec)
             result = self.tool_registry.execute(tool_call)
             tool_results.append(result)
             

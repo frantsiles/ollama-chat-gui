@@ -33,6 +33,8 @@ class Session:
     pending_approval: Optional[Dict[str, Any]] = None
     current_plan: Optional[Dict[str, Any]] = None
     agent_trace: List[str] = field(default_factory=list)
+    # Running lightweight summary of conversation history (for context windowing)
+    context_summary: str = ""
     created_at: datetime = field(default_factory=datetime.now)
     
     def to_dict(self) -> Dict[str, Any]:
@@ -49,6 +51,7 @@ class Session:
             "current_plan": self.current_plan,
             "agent_trace": self.agent_trace,
             "message_count": len(self.conversation.messages),
+            "has_context_summary": bool(self.context_summary),
         }
     
     def add_message(self, role: str, content: str, **kwargs) -> Message:
@@ -76,6 +79,7 @@ class Session:
         self.pending_approval = None
         self.current_plan = None
         self.agent_trace = []
+        self.context_summary = ""
 
 
 class SessionManager:

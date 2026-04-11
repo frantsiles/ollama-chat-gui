@@ -47,6 +47,24 @@ MAX_PLAN_STEPS = 20
 MAX_TOOL_REPAIR_CHARS = 16000
 
 # =============================================================================
+# Context Management
+# =============================================================================
+# Start summarizing when conversation has more messages than this
+MAX_CONTEXT_MESSAGES = 20
+# Always keep the last N messages verbatim in the context window
+MAX_CONTEXT_MESSAGES_KEEP = 8
+
+# =============================================================================
+# Input Validation
+# =============================================================================
+# Maximum length of a single user message (chars)
+MAX_INPUT_CHARS = 8000
+# Maximum total attachment content per request
+MAX_ATTACHMENT_CHARS_TOTAL = 8000
+# Maximum content per individual attachment file
+MAX_ATTACHMENT_CHARS_PER_FILE = 4000
+
+# =============================================================================
 # RAG Configuration
 # =============================================================================
 MAX_AUTOCONTEXT_ENTRIES = 60

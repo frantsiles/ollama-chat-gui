@@ -18,7 +18,13 @@ if not logger.handlers:
     handler.setFormatter(logging.Formatter('[%(asctime)s] [WS] %(message)s', '%H:%M:%S'))
     logger.addHandler(handler)
 
-from config import OLLAMA_BASE_URL, OperationMode
+from config import (
+    MAX_ATTACHMENT_CHARS_PER_FILE,
+    MAX_ATTACHMENT_CHARS_TOTAL,
+    MAX_INPUT_CHARS,
+    OLLAMA_BASE_URL,
+    OperationMode,
+)
 from core.agent import Agent, AgentResponse
 from core.models import Conversation, Plan, PlanStatus, ToolCall
 from core.planner import PlanManager
@@ -56,20 +62,73 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+async def _build_full_content(
+    content: str,
+    attachments_raw: list,
+) -> str:
+    """
+    Inyecta el contenido de adjuntos en el mensaje del usuario.
+    Respeta límites de tamaño para no saturar el contexto.
+    """
+    if not attachments_raw:
+        return content
+
+    blocks = []
+    total_chars = 0
+    for att in attachments_raw:
+        if not isinstance(att, dict):
+            continue
+        att_content = att.get("content", "")
+        if not att_content:
+            continue
+        name = att.get("name", "archivo")
+        # Truncar por archivo
+        if len(att_content) > MAX_ATTACHMENT_CHARS_PER_FILE:
+            att_content = att_content[:MAX_ATTACHMENT_CHARS_PER_FILE] + "\n...[recortado]..."
+        # Respetar límite total
+        if total_chars + len(att_content) > MAX_ATTACHMENT_CHARS_TOTAL:
+            remaining = MAX_ATTACHMENT_CHARS_TOTAL - total_chars
+            if remaining <= 0:
+                break
+            att_content = att_content[:remaining] + "\n...[recortado]..."
+        blocks.append(f"[Archivo: {name}]\n{att_content}")
+        total_chars += len(att_content)
+
+    if not blocks:
+        return content
+
+    attachment_ctx = "\n\n---\n\n".join(blocks)
+    return f"{content}\n\n---\nArchivos adjuntos:\n{attachment_ctx}"
+
+
 async def handle_chat_message(
     websocket: WebSocket,
     session: Session,
     data: Dict[str, Any],
 ) -> None:
     """Maneja un mensaje de chat."""
-    content = data.get("content", "").strip()
-    if not content:
+    raw_content = data.get("content", "").strip()
+    if not raw_content:
         await websocket.send_json({"type": "error", "message": "Empty message"})
         return
-    
-    attachments = data.get("attachments", [])
+
+    # --- Validación de tamaño de input ---
+    if len(raw_content) > MAX_INPUT_CHARS:
+        await websocket.send_json({
+            "type": "error",
+            "message": (
+                f"El mensaje es demasiado largo ({len(raw_content):,} caracteres). "
+                f"Máximo permitido: {MAX_INPUT_CHARS:,} caracteres."
+            ),
+        })
+        return
+
+    attachments_raw = data.get("attachments", [])
     images = data.get("images", [])
-    
+
+    # --- Inyectar adjuntos en el contenido del mensaje ---
+    content = await _build_full_content(raw_content, attachments_raw)
+
     # Crear cliente y agente
     client = OllamaClient(base_url=OLLAMA_BASE_URL)
     agent = Agent(
@@ -81,32 +140,68 @@ async def handle_chat_message(
         mode=session.mode,
     )
     agent.approval_manager.set_level(session.approval_level)
-    
+    # Restaurar el sumario de contexto de sesiones anteriores
+    agent._context_summary = session.context_summary
+
     # Notificar inicio
-    await websocket.send_json({
-        "type": "start",
-        "mode": session.mode,
-    })
-    
+    await websocket.send_json({"type": "start", "mode": session.mode})
+
     try:
         if session.mode == OperationMode.CHAT:
             response = await asyncio.to_thread(
                 agent.chat,
                 content,
                 session.conversation,
-                attachments,
+                [],  # attachments ya inyectados en content
                 images,
             )
+
         elif session.mode == OperationMode.AGENT:
-            response = await asyncio.to_thread(
-                agent.run,
-                content,
-                session.conversation,
-                attachments,
-                images,
+            # --- Streaming de pasos del agente ---
+            step_queue: asyncio.Queue = asyncio.Queue()
+            loop = asyncio.get_running_loop()
+
+            def step_callback(msg: str) -> None:
+                loop.call_soon_threadsafe(step_queue.put_nowait, msg)
+
+            agent_task = asyncio.create_task(
+                asyncio.to_thread(
+                    lambda: agent.run(
+                        content,
+                        session.conversation,
+                        [],  # attachments ya inyectados
+                        images,
+                        step_callback,
+                    )
+                )
             )
+
+            # Emitir pasos mientras el agente trabaja
+            while not agent_task.done():
+                try:
+                    step_msg = step_queue.get_nowait()
+                    await websocket.send_json({
+                        "type": "agent_step",
+                        "message": step_msg,
+                    })
+                except asyncio.QueueEmpty:
+                    await asyncio.sleep(0.1)
+
+            # Vaciar cola restante
+            while not step_queue.empty():
+                step_msg = step_queue.get_nowait()
+                await websocket.send_json({
+                    "type": "agent_step",
+                    "message": step_msg,
+                })
+
+            # Propagar excepción si la tarea falló
+            exc = agent_task.exception()
+            if exc:
+                raise exc
+            response = agent_task.result()
+
         elif session.mode == OperationMode.PLAN:
-            # Primero crear el plan
             planner = PlanManager(client=client, model=session.model)
             plan = await asyncio.to_thread(
                 planner.create_plan,
@@ -130,7 +225,11 @@ async def handle_chat_message(
                 content="Modo no soportado",
                 status="error",
             )
-        
+
+        # --- Persistir sumario de contexto actualizado ---
+        if agent._context_summary:
+            session.context_summary = agent._context_summary
+
         # Enviar respuesta
         await websocket.send_json({
             "type": "response",
@@ -139,11 +238,11 @@ async def handle_chat_message(
             "trace": response.trace,
             "tool_results": [tr.to_dict() for tr in response.tool_results],
         })
-        
+
         # Actualizar CWD si cambió
         if response.new_cwd:
             session.current_cwd = response.new_cwd
-        
+
         # Manejar aprobación pendiente
         if response.status == "awaiting_approval":
             pending_tool = agent.state.pending_approval
@@ -156,10 +255,10 @@ async def handle_chat_message(
                 "type": "approval_required",
                 "pending": session.pending_approval,
             })
-        
+
         # Guardar trace
         session.agent_trace = response.trace
-        
+
     except OllamaClientError as e:
         await websocket.send_json({
             "type": "error",
