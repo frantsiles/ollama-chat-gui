@@ -91,6 +91,29 @@ RAG_IGNORED_DIRS = {
 }
 
 # =============================================================================
+# Semantic RAG / Embeddings
+# =============================================================================
+EMBEDDING_ENABLED: bool = os.getenv("EMBEDDING_ENABLED", "true").lower() != "false"
+EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+CHROMA_DB_PATH = _Path(
+    os.getenv(
+        "CHROMA_DB_PATH",
+        os.path.join(os.path.expanduser("~"), ".local", "share", "ollama-chat-gui", "chroma"),
+    )
+)
+# Puntuación mínima cosine (0-1) para emitir sugerencias proactivas
+RAG_PROACTIVE_SCORE_THRESHOLD: float = float(os.getenv("RAG_PROACTIVE_SCORE_THRESHOLD", "0.75"))
+# Turnos de cooldown entre dos rondas de sugerencias proactivas para el mismo set de archivos
+RAG_PROACTIVE_COOLDOWN_TURNS: int = int(os.getenv("RAG_PROACTIVE_COOLDOWN_TURNS", "2"))
+# Número de chunks semánticos a recuperar por query
+RAG_SEMANTIC_TOP_K: int = int(os.getenv("RAG_SEMANTIC_TOP_K", "6"))
+# Límites para documentos externos en la KB
+KB_MAX_DOCUMENT_CHARS: int = 50_000
+KB_CHUNK_CHARS: int = 1_000
+# Máximo de URLs permitidas en la KB externa
+KB_MAX_DOCUMENTS: int = 500
+
+# =============================================================================
 # Chat Export
 # =============================================================================
 CHAT_EXPORT_DIRNAME = ".chat_exports"

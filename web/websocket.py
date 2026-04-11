@@ -164,14 +164,18 @@ async def handle_chat_message(
         agent.approval_manager.set_level(session.approval_level)
         agent._context_summary = session.context_summary
 
-        # --- RAG incremental (solo modo agent con keywords) ---
-        if session.mode == OperationMode.AGENT:
-            from rag.local_rag import get_rag
-            rag_instance = get_rag(Path(session.workspace_root))
-            if rag_instance.should_activate(raw_content):
-                rag_context, _ = rag_instance.retrieve(raw_content)
-                if rag_context:
-                    session.conversation.add_system_message(rag_context)
+        # --- RAG semántico (workspace + KB) ---
+        # Activo en modos Agent y Plan; en Chat es opt-in por keywords.
+        from rag.semantic_rag import get_semantic_rag
+        srag = get_semantic_rag(session.workspace_root)
+        # Asegurar indexación en background la primera vez
+        srag.ensure_indexed()
+        if srag.should_activate(raw_content):
+            rag_context, _ = await asyncio.to_thread(
+                srag.retrieve, raw_content
+            )
+            if rag_context:
+                session.conversation.add_system_message(rag_context)
 
         # Notificar inicio
         await websocket.send_json({"type": "start", "mode": session.mode})
@@ -289,6 +293,32 @@ async def handle_chat_message(
             # Guardar trace y métricas
             session.agent_trace = response.trace
             metric.finish(response.status)
+
+            # --- Sugerencias proactivas (background, no bloquea) ---
+            # Se generan después de enviar la respuesta para no añadir latencia.
+            try:
+                recent_texts = [
+                    m.content for m in session.conversation.messages[-6:]
+                    if m.content
+                ]
+                suggestions = await asyncio.to_thread(
+                    srag.get_proactive_suggestions, recent_texts
+                )
+                if suggestions:
+                    await websocket.send_json({
+                        "type": "rag_suggestion",
+                        "suggestions": [
+                            {
+                                "path": s.path,
+                                "score": s.score,
+                                "snippet": s.snippet,
+                                "reason": s.reason,
+                            }
+                            for s in suggestions
+                        ],
+                    })
+            except Exception as _sug_exc:
+                logger.debug("Error calculando sugerencias proactivas: %s", _sug_exc)
 
         except OllamaClientError as e:
             metric.finish("error")
