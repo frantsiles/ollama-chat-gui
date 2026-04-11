@@ -1,0 +1,227 @@
+"""REST API endpoints."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from config import ApprovalLevel, OLLAMA_BASE_URL, OperationMode
+from llm.client import OllamaClient, OllamaClientError
+from web.state import Session, SessionManager
+
+router = APIRouter(prefix="/api", tags=["api"])
+
+
+# =============================================================================
+# Pydantic Models
+# =============================================================================
+
+class ConfigUpdate(BaseModel):
+    """Actualización de configuración."""
+    model: Optional[str] = None
+    mode: Optional[str] = None
+    temperature: Optional[float] = None
+    workspace_root: Optional[str] = None
+    approval_level: Optional[str] = None
+
+
+class SessionCreate(BaseModel):
+    """Crear nueva sesión."""
+    workspace_root: Optional[str] = None
+
+
+class ApprovalAction(BaseModel):
+    """Acción de aprobación."""
+    approved: bool
+
+
+# =============================================================================
+# Models Endpoints
+# =============================================================================
+
+@router.get("/models")
+async def get_models() -> Dict[str, Any]:
+    """Obtiene la lista de modelos disponibles."""
+    try:
+        client = OllamaClient(base_url=OLLAMA_BASE_URL)
+        models = client.list_models()
+        
+        # Obtener capacidades de cada modelo
+        model_list = []
+        for model in models:
+            caps = client.get_model_capabilities(model)
+            model_list.append({
+                "name": model,
+                "capabilities": list(caps),
+            })
+        
+        return {"models": model_list}
+    except OllamaClientError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+@router.get("/models/{model_name}/info")
+async def get_model_info(model_name: str) -> Dict[str, Any]:
+    """Obtiene información detallada de un modelo."""
+    try:
+        client = OllamaClient(base_url=OLLAMA_BASE_URL)
+        info = client.get_model_info(model_name)
+        return {"model": model_name, "info": info}
+    except OllamaClientError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+# =============================================================================
+# Session Endpoints
+# =============================================================================
+
+@router.post("/sessions")
+async def create_session(data: SessionCreate) -> Dict[str, Any]:
+    """Crea una nueva sesión."""
+    session = SessionManager.get_or_create()
+    
+    if data.workspace_root:
+        path = Path(data.workspace_root).expanduser().resolve()
+        if path.exists() and path.is_dir():
+            session.workspace_root = str(path)
+            session.current_cwd = str(path)
+    
+    return {"session_id": session.id, "session": session.to_dict()}
+
+
+@router.get("/sessions/{session_id}")
+async def get_session(session_id: str) -> Dict[str, Any]:
+    """Obtiene información de una sesión."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"session": session.to_dict()}
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session(session_id: str) -> Dict[str, str]:
+    """Elimina una sesión."""
+    if SessionManager.delete(session_id):
+        return {"status": "deleted"}
+    raise HTTPException(status_code=404, detail="Session not found")
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_messages(session_id: str) -> Dict[str, Any]:
+    """Obtiene los mensajes de una sesión."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"messages": session.get_messages_for_display()}
+
+
+@router.delete("/sessions/{session_id}/messages")
+async def clear_messages(session_id: str) -> Dict[str, str]:
+    """Limpia los mensajes de una sesión."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.clear()
+    return {"status": "cleared"}
+
+
+# =============================================================================
+# Config Endpoints
+# =============================================================================
+
+@router.get("/sessions/{session_id}/config")
+async def get_config(session_id: str) -> Dict[str, Any]:
+    """Obtiene la configuración de una sesión."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    return {
+        "model": session.model,
+        "mode": session.mode,
+        "temperature": session.temperature,
+        "workspace_root": session.workspace_root,
+        "current_cwd": session.current_cwd,
+        "approval_level": session.approval_level,
+        "modes": [OperationMode.CHAT, OperationMode.AGENT, OperationMode.PLAN],
+        "approval_levels": [ApprovalLevel.NONE, ApprovalLevel.WRITE_ONLY, ApprovalLevel.ALL],
+    }
+
+
+@router.patch("/sessions/{session_id}/config")
+async def update_config(session_id: str, data: ConfigUpdate) -> Dict[str, Any]:
+    """Actualiza la configuración de una sesión."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if data.model is not None:
+        session.model = data.model
+    if data.mode is not None:
+        if data.mode in (OperationMode.CHAT, OperationMode.AGENT, OperationMode.PLAN):
+            session.mode = data.mode
+    if data.temperature is not None:
+        session.temperature = max(0.0, min(2.0, data.temperature))
+    if data.workspace_root is not None:
+        path = Path(data.workspace_root).expanduser().resolve()
+        if path.exists() and path.is_dir():
+            session.workspace_root = str(path)
+            session.current_cwd = str(path)
+    if data.approval_level is not None:
+        if data.approval_level in (ApprovalLevel.NONE, ApprovalLevel.WRITE_ONLY, ApprovalLevel.ALL):
+            session.approval_level = data.approval_level
+    
+    return {"config": session.to_dict()}
+
+
+# =============================================================================
+# Approval Endpoints
+# =============================================================================
+
+@router.get("/sessions/{session_id}/approval")
+async def get_pending_approval(session_id: str) -> Dict[str, Any]:
+    """Obtiene la aprobación pendiente."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"pending": session.pending_approval}
+
+
+@router.post("/sessions/{session_id}/approval")
+async def handle_approval(session_id: str, action: ApprovalAction) -> Dict[str, str]:
+    """Maneja una acción de aprobación."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    
+    if not session.pending_approval:
+        raise HTTPException(status_code=400, detail="No pending approval")
+    
+    # La aprobación se maneja via WebSocket para continuar el flujo
+    return {"status": "pending", "message": "Use WebSocket to handle approval"}
+
+
+# =============================================================================
+# Plan Endpoints
+# =============================================================================
+
+@router.get("/sessions/{session_id}/plan")
+async def get_current_plan(session_id: str) -> Dict[str, Any]:
+    """Obtiene el plan actual."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return {"plan": session.current_plan}
+
+
+# =============================================================================
+# Health Check
+# =============================================================================
+
+@router.get("/health")
+async def health_check() -> Dict[str, str]:
+    """Health check endpoint."""
+    return {"status": "ok"}

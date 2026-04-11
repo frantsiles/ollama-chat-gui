@@ -16,7 +16,14 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Run the NEW modular app
+### Run the NEW web UI (recommended)
+```bash
+python app_web.py
+# Or directly with uvicorn:
+uvicorn web.server:app --reload --port 8000
+```
+
+### Run Streamlit UI (legacy)
 ```bash
 streamlit run app_new.py
 ```
