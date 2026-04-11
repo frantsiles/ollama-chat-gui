@@ -404,6 +404,85 @@ async def handle_approval(
         SessionManager.save(session)
 
 
+async def _run_plan_auto(
+    websocket: WebSocket,
+    session: Session,
+    plan: Plan,
+) -> None:
+    """
+    Ejecuta todos los pasos del plan de forma autónoma y hace streaming
+    de cada paso completado via WebSocket.
+    """
+    client = OllamaClient(base_url=OLLAMA_BASE_URL)
+    agent = Agent(
+        client=client,
+        model=session.model,
+        workspace_root=Path(session.workspace_root),
+        current_cwd=Path(session.current_cwd),
+        temperature=session.temperature,
+        mode=OperationMode.PLAN,
+    )
+    agent.approval_manager.set_level(session.approval_level)
+
+    # Cola para que el step_callback (hilo) envíe actualizaciones al loop async
+    step_queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def step_callback(description: str, plan_dict: dict) -> None:
+        loop.call_soon_threadsafe(step_queue.put_nowait, (description, plan_dict))
+
+    agent_task = asyncio.create_task(
+        asyncio.to_thread(
+            lambda: agent.execute_plan_step(
+                plan,
+                session.conversation,
+                auto_execute=True,
+                step_callback=step_callback,
+            )
+        )
+    )
+
+    # Drenar la cola mientras el agente trabaja
+    while not agent_task.done():
+        try:
+            description, plan_dict = step_queue.get_nowait()
+            await websocket.send_json({
+                "type": "plan_step_complete",
+                "plan": plan_dict,
+                "status": "in_progress",
+                "content": description,
+            })
+        except asyncio.QueueEmpty:
+            await asyncio.sleep(0.1)
+
+    # Drenar lo que quedó en la cola tras terminar
+    while not step_queue.empty():
+        description, plan_dict = step_queue.get_nowait()
+        await websocket.send_json({
+            "type": "plan_step_complete",
+            "plan": plan_dict,
+            "status": "in_progress",
+            "content": description,
+        })
+
+    exc = agent_task.exception()
+    if exc:
+        raise exc
+
+    response = agent_task.result()
+    session.current_plan = response.plan.to_dict() if response.plan else None
+    if response.new_cwd:
+        session.current_cwd = response.new_cwd
+
+    await websocket.send_json({
+        "type": "plan_step_complete",
+        "plan": session.current_plan,
+        "status": response.status,
+        "content": response.content,
+    })
+    SessionManager.save(session)
+
+
 async def handle_plan_action(
     websocket: WebSocket,
     session: Session,
@@ -411,83 +490,58 @@ async def handle_plan_action(
 ) -> None:
     """Maneja acciones sobre planes."""
     action = data.get("action")
-    
+
     if not session.current_plan:
         await websocket.send_json({
             "type": "error",
             "message": "No hay plan activo",
         })
         return
-    
+
     plan = Plan.from_dict(session.current_plan)
-    
+
     if action == "approve":
+        # Marcar como aprobado y ejecutar automáticamente todos los pasos
         plan.status = PlanStatus.APPROVED
         session.current_plan = plan.to_dict()
-        
+
         await websocket.send_json({
             "type": "plan_approved",
             "plan": plan.to_dict(),
         })
-        
+
+        try:
+            await _run_plan_auto(websocket, session, plan)
+        except Exception as e:
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Error ejecutando el plan: {e}",
+            })
+
     elif action == "reject":
         plan.status = PlanStatus.CANCELLED
         session.current_plan = None
-        
+
         await websocket.send_json({
             "type": "plan_rejected",
         })
-        
+
     elif action == "execute":
+        # Compatibilidad: si el cliente envía 'execute' explícitamente,
+        # ejecutar igual que en approve (auto_execute=True).
         if plan.status != PlanStatus.APPROVED:
             await websocket.send_json({
                 "type": "error",
                 "message": "El plan debe ser aprobado primero",
             })
             return
-        
-        # Ejecutar plan paso a paso
-        client = OllamaClient(base_url=OLLAMA_BASE_URL)
-        agent = Agent(
-            client=client,
-            model=session.model,
-            workspace_root=Path(session.workspace_root),
-            current_cwd=Path(session.current_cwd),
-            temperature=session.temperature,
-            mode=OperationMode.PLAN,
-        )
-        agent.approval_manager.set_level(session.approval_level)
-        
-        try:
-            response = await asyncio.to_thread(
-                agent.execute_plan_step,
-                plan,
-                session.conversation,
-            )
-            
-            session.current_plan = response.plan.to_dict() if response.plan else None
-            
-            await websocket.send_json({
-                "type": "plan_step_complete",
-                "plan": session.current_plan,
-                "status": response.status,
-                "content": response.content,
-            })
 
-            if response.status == "awaiting_approval":
-                session.pending_approval = {
-                    "tool_call": "plan_step",
-                    "description": response.content,
-                }
-                await websocket.send_json({
-                    "type": "approval_required",
-                    "pending": session.pending_approval,
-                })
-            
+        try:
+            await _run_plan_auto(websocket, session, plan)
         except Exception as e:
             await websocket.send_json({
                 "type": "error",
-                "message": str(e),
+                "message": f"Error ejecutando el plan: {e}",
             })
 
 

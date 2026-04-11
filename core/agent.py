@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ast as _ast
+import json as _json
+import re as _re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Generator, List, Optional
@@ -487,18 +490,167 @@ class Agent:
             conversation=conversation,
         )
     
+    # ------------------------------------------------------------------
+    # Helpers para ejecución autónoma de planes
+    # ------------------------------------------------------------------
+
+    # Placeholder: {nombre} que NO esté precedido de f' o f" (para evitar falsos positivos con f-strings)
+    _PLACEHOLDER_RE = _re.compile(r"\{[a-zA-Z_]\w*\}")
+
+    @staticmethod
+    def _args_have_placeholders(args: Dict[str, Any]) -> bool:
+        """
+        Detecta si algún arg contiene un placeholder tipo {nombre}.
+        Ignora 'code' de execute_python (tiene f-strings válidos).
+        """
+        for key, v in args.items():
+            # Saltar el código Python (tiene f-strings legítimos)
+            if key == "code":
+                continue
+            if isinstance(v, str) and Agent._PLACEHOLDER_RE.search(v):
+                return True
+        return False
+
+    def _needs_arg_resolution(self, tool_name: str, args: Dict[str, Any]) -> bool:
+        """
+        Decide si los args de un paso necesitan resolución dinámica.
+        """
+        if not args or self._args_have_placeholders(args):
+            return True
+        # write_file con content vacío
+        if tool_name == "write_file":
+            content = args.get("content", "")
+            if not content or not content.strip():
+                return True
+        # read_file con path vacío o ausente
+        if tool_name == "read_file":
+            path = args.get("path", "")
+            if not path or not path.strip():
+                return True
+        # execute_python: no resolver (el código ya es autocontenido)
+        if tool_name == "execute_python":
+            code = args.get("code", "")
+            if not code or not code.strip():
+                return True
+            return False
+        # Validar que los args requeridos estén presentes
+        test_call = ToolCall(tool=tool_name, args=args)
+        if self.tool_registry.validate_tool_call(test_call) is not None:
+            return True
+        return False
+
+    def _resolve_step_args(
+        self,
+        step_id: int,
+        step_description: str,
+        tool_name: str,
+        raw_args: Dict[str, Any],
+        conversation: Conversation,
+    ) -> Dict[str, Any]:
+        """
+        Llama al LLM para resolver los args del paso usando resultados
+        reales de pasos anteriores ya presentes en la conversación.
+        Hace fallback a raw_args si falla.
+        """
+        # Recopilar resultados de pasos anteriores como contexto explícito
+        prev_results: List[str] = []
+        for msg in conversation.messages:
+            if msg.role == MessageRole.SYSTEM and "Observation" in msg.content:
+                prev_results.append(msg.content)
+
+        system = (
+            f"Estás ejecutando el paso {step_id} de un plan.\n"
+            f"Genera los argumentos EXACTOS para la herramienta `{tool_name}`.\n"
+            "USA los valores REALES que aparecen en los resultados anteriores.\n"
+            "Por ejemplo, si un paso anterior creó 'AAAAAAAA_20260411.log', usa ESE nombre exacto.\n"
+            "Responde SOLO un objeto JSON válido. Sin texto, sin markdown."
+        )
+        messages = [{"role": "system", "content": system}]
+        # Inyectar resultados anteriores como contexto directo
+        if prev_results:
+            messages.append({
+                "role": "system",
+                "content": "Resultados de pasos anteriores:\n" + "\n---\n".join(prev_results[-5:]),
+            })
+        messages.append({
+            "role": "user",
+            "content": (
+                f"Paso: {step_description}\n"
+                f"Herramienta: {tool_name}\n"
+                f"Args originales: {_json.dumps(raw_args, ensure_ascii=False)}\n\n"
+                "Genera los args con valores reales extraídos de los resultados anteriores. SOLO JSON."
+            ),
+        })
+        try:
+            raw = self._call_model(messages).strip()
+            # Quitar bloque de código markdown si el modelo lo envuelve
+            if raw.startswith("```"):
+                lines = raw.splitlines()
+                raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+            resolved = _json.loads(raw)
+            if isinstance(resolved, dict):
+                self.state.add_trace(
+                    f"Args del paso {step_id} resueltos dinámicamente"
+                )
+                return resolved
+        except Exception:
+            pass
+        return raw_args
+
+    def _try_fix_python_code(self, code: str) -> str:
+        """
+        Valida código Python con ast.parse().
+        Si tiene SyntaxError, pide al LLM que lo corrija.
+        Retorna el código corregido o el original si falla.
+        """
+        try:
+            _ast.parse(code)
+            return code
+        except SyntaxError as exc:
+            self.state.add_trace(
+                f"Código Python tiene SyntaxError: {exc.msg} (línea {exc.lineno}), intentando reparar"
+            )
+
+        repair_prompt = (
+            "El siguiente código Python tiene un error de sintaxis. "
+            "Corrígelo y devuelve SOLO el código Python corregido. "
+            "Sin explicaciones, sin markdown, sin bloques de código. Solo el código puro."
+        )
+        messages = [
+            {"role": "system", "content": repair_prompt},
+            {"role": "user", "content": code},
+        ]
+        try:
+            fixed = self._call_model(messages).strip()
+            # Quitar markdown si el modelo lo envuelve
+            if fixed.startswith("```"):
+                lines = fixed.splitlines()
+                fixed = "\n".join(lines[1:-1]) if len(lines) > 2 else fixed
+            _ast.parse(fixed)
+            self.state.add_trace("Código Python reparado exitosamente")
+            return fixed
+        except Exception:
+            pass
+        return code
+
     def execute_plan_step(
         self,
         plan: Plan,
         conversation: Conversation,
+        auto_execute: bool = False,
+        step_callback: Optional[Callable[[str, dict], None]] = None,
     ) -> AgentResponse:
         """
         Ejecuta el siguiente paso de un plan.
-        
+
         Args:
             plan: Plan a ejecutar
             conversation: Conversación actual
-            
+            auto_execute: Si es True, omite las aprobaciones por paso y
+                          ejecuta el plan completo de forma autónoma.
+            step_callback: Función opcional llamada después de cada paso con
+                           (descripción, plan_dict). Útil para streaming via WS.
+
         Returns:
             Respuesta del agente
         """
@@ -510,15 +662,15 @@ class Agent:
                 status="completed",
                 plan=plan,
             )
-        
+
         # Marcar como en progreso
         current_step.status = StepStatus.IN_PROGRESS
         plan.status = PlanStatus.IN_PROGRESS
-        
+
         self.state.add_trace(f"Ejecutando paso {current_step.id}: {current_step.description}")
-        
-        # Si requiere aprobación
-        if current_step.requires_approval:
+
+        # Si requiere aprobación Y no estamos en modo auto_execute
+        if current_step.requires_approval and not auto_execute:
             if current_step.tool:
                 tool_call = ToolCall(
                     tool=current_step.tool,
@@ -526,26 +678,48 @@ class Agent:
                 )
                 self.approval_manager.request_approval(tool_call)
                 current_step.status = StepStatus.AWAITING_APPROVAL
-                
+
                 return AgentResponse(
                     content=f"Paso {current_step.id} requiere aprobación: {current_step.description}",
                     status="awaiting_approval",
                     plan=plan,
                     trace=self.state.trace,
                 )
-        
+
         # Ejecutar el paso
-        if current_step.tool:
+        # Normalizar tool: None, "none", "null", "" se tratan como paso sin herramienta
+        effective_tool = current_step.tool
+        if effective_tool and effective_tool.lower() in ("none", "null", ""):
+            effective_tool = None
+
+        if effective_tool:
+            # Resolver args dinámicamente cuando sea necesario (solo en auto_execute)
+            resolved_args = current_step.args
+            if auto_execute and self._needs_arg_resolution(effective_tool, current_step.args):
+                resolved_args = self._resolve_step_args(
+                    step_id=current_step.id,
+                    step_description=current_step.description,
+                    tool_name=effective_tool,
+                    raw_args=current_step.args,
+                    conversation=conversation,
+                )
+
+            # Validar y reparar código Python antes de ejecutar
+            if effective_tool == "execute_python" and "code" in resolved_args:
+                resolved_args["code"] = self._try_fix_python_code(
+                    resolved_args["code"]
+                )
+
             tool_call = ToolCall(
-                tool=current_step.tool,
-                args=current_step.args,
+                tool=effective_tool,
+                args=resolved_args,
             )
             result = self.tool_registry.execute(tool_call)
             current_step.result = result
-            
+
             if result.new_cwd:
                 self.set_cwd(Path(result.new_cwd))
-            
+
             if result.success:
                 current_step.status = StepStatus.COMPLETED
                 self.state.add_trace(f"Paso {current_step.id} completado")
@@ -553,10 +727,23 @@ class Agent:
                 current_step.status = StepStatus.FAILED
                 current_step.error_message = result.error
                 self.state.add_trace(f"Paso {current_step.id} falló: {result.error}")
+
+            # Inyectar resultado en la conversación para que pasos
+            # posteriores puedan referenciarlo al resolver sus args
+            observation = PromptManager.build_tool_result_context(
+                step=current_step.id,
+                tool_call=str(tool_call),
+                result=result.output if result.success else f"Error: {result.error}",
+            )
+            conversation.add_system_message(observation)
         else:
             # Paso sin tool (solo descripción)
             current_step.status = StepStatus.COMPLETED
-        
+
+        # Notificar progreso al caller (usado para streaming por WS)
+        if step_callback:
+            step_callback(current_step.description, plan.to_dict())
+
         # Verificar si el plan está completo
         if plan.is_complete:
             plan.status = PlanStatus.COMPLETED
@@ -566,6 +753,6 @@ class Agent:
                 plan=plan,
                 trace=self.state.trace,
             )
-        
+
         # Continuar con el siguiente paso
-        return self.execute_plan_step(plan, conversation)
+        return self.execute_plan_step(plan, conversation, auto_execute, step_callback)

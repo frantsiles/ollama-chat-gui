@@ -32,12 +32,13 @@ formato {"tool":"nombre_tool","args":{...},"reasoning":"explicación breve"}.
 7) Si el usuario da una instrucción directa accionable, avanza con tools.
 
 Herramientas disponibles:
-- run_command(command): Ejecuta un comando en el workspace
+- run_command(command): Ejecuta un comando de shell en el workspace
 - read_file(path): Lee contenido de un archivo
 - write_file(path, content, append=false): Escribe en un archivo
 - create_directory(path): Crea un directorio
 - list_directory(path=".", recursive=false): Lista contenido de carpeta
 - search_files(pattern, path="."): Busca archivos por patrón
+- execute_python(code): Ejecuta código Python y retorna el resultado real. Úsalo para cálculos, transformaciones de datos u operaciones que requieren resultados concretos en lugar de describirlos.
 """
 
 PLAN_SYSTEM_PROMPT = """\
@@ -77,13 +78,27 @@ Cuando el plan esté aprobado y debas ejecutar un paso, responde con:
 
 Si no necesitas crear un plan (tarea simple), responde normalmente en lenguaje natural.
 
+REGLAS CRÍTICAS para los args del plan:
+- Los valores en args DEBEN ser strings JSON simples, números, booleanos o arrays. NUNCA expresiones de código, concatenaciones ni llamadas a funciones dentro del JSON.
+- INCORRECTO: {"content": "Fecha: " + execute_python("...")}
+- INCORRECTO: {"path": "log.txt", "content": ""} ← content vacío cuando debería tener datos
+
+PATRÓN CORRECTO para crear archivos con datos dinámicos (fecha, cálculos, etc.):
+Usa UN SOLO paso execute_python que calcule el valor Y escriba el archivo directamente:
+{"tool": "execute_python", "args": {"code": "import datetime\nfecha = datetime.date.today().strftime('%Y%m%d')\nwith open(f'PREFIJO_{fecha}.log', 'w') as f:\n    f.write(f'Log generado: {fecha}\\n')\nprint(f'Archivo creado: PREFIJO_{fecha}.log')"}}
+
+NO uses write_file con content vacío esperando que otro paso lo llene. Cada paso debe ser autocontenido.
+
+Para el paso final de resumen: si no necesitas una herramienta, omite el campo "tool" o usa "tool": null. Ese paso simplemente mostrará un mensaje.
+
 Herramientas disponibles:
-- run_command(command): Ejecuta un comando en el workspace
+- run_command(command): Ejecuta un comando de shell en el workspace
 - read_file(path): Lee contenido de un archivo
 - write_file(path, content, append=false): Escribe en un archivo
 - create_directory(path): Crea un directorio
 - list_directory(path=".", recursive=false): Lista contenido de carpeta
 - search_files(pattern, path="."): Busca archivos por patrón
+- execute_python(code): Ejecuta código Python y retorna el resultado real. Úsalo para cálculos, fechas, transformaciones o cualquier operación que requiera un resultado concreto.
 """
 
 

@@ -17,6 +17,7 @@ from tools.filesystem import (
     SearchFilesTool,
     WriteFileTool,
 )
+from tools.python_executor import ExecutePythonTool
 
 
 # Patrón para extraer JSON de bloques de código
@@ -42,6 +43,7 @@ class ToolRegistry:
         "create_directory": CreateDirectoryTool,
         "search_files": SearchFilesTool,
         "run_command": RunCommandTool,
+        "execute_python": ExecutePythonTool,
     }
     
     def __init__(self, workspace_root: Path, current_cwd: Path):

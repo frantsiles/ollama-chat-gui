@@ -28,6 +28,15 @@ PLAN_JSON_PATTERN = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Patrones de expresiones inválidas que algunos modelos insertan en los args
+# Elimina: "valor" + cualquier_expresion(...)   →  "valor"
+# El lookahead asegura que no se toca JSON válido
+_INVALID_EXPR_RE = re.compile(
+    r'(")\s*\+\s*.+?(?=\s*[,}\]])',
+    re.DOTALL,
+)
+_TRAILING_COMMA_RE = re.compile(r',\s*([}\]])')
+
 
 class PlanManager:
     """
@@ -76,25 +85,44 @@ class PlanManager:
             options={"temperature": self.temperature},
         )
     
+    @staticmethod
+    def _sanitize_json_str(raw: str) -> str:
+        """
+        Limpia patrones inválidos que algunos modelos insertan en el JSON:
+        - Expresiones de concatenación: "..." + func(...)  →  ""
+        - Comas finales antes de } o ]
+        """
+        cleaned = _INVALID_EXPR_RE.sub('"', raw)
+        cleaned = _TRAILING_COMMA_RE.sub(r'\1', cleaned)
+        return cleaned
+
+    @staticmethod
+    def _try_parse(text: str) -> Optional[Dict[str, Any]]:
+        """Intenta parsear JSON, con fallback tras sanitizar."""
+        for candidate in (text, PlanManager._sanitize_json_str(text)):
+            try:
+                data = json.loads(candidate)
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                continue
+        return None
+
     def _extract_plan_from_response(self, response: str) -> Optional[Dict[str, Any]]:
         """Extrae un plan del texto de respuesta."""
-        # Buscar con el patrón
-        match = PLAN_JSON_PATTERN.search(response)
-        if match:
-            try:
-                return json.loads("{" + match.group(0).split("{", 1)[1])
-            except json.JSONDecodeError:
-                pass
-        
-        # Intentar parsear como JSON directo
-        try:
-            data = json.loads(response.strip())
-            if isinstance(data, dict) and "plan" in data:
+        # 1. Extraer bloque ```json ... ``` si existe
+        md_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL | re.IGNORECASE)
+        if md_match:
+            data = self._try_parse(md_match.group(1))
+            if data and ("plan" in data or data.get("action") == "create_plan"):
                 return data
-        except json.JSONDecodeError:
-            pass
-        
-        # Buscar JSON embebido
+
+        # 2. Intentar parsear la respuesta completa como JSON
+        data = self._try_parse(response.strip())
+        if data and ("plan" in data or data.get("action") == "create_plan"):
+            return data
+
+        # 3. Buscar JSON embebido con raw_decode
         decoder = json.JSONDecoder()
         for i, char in enumerate(response):
             if char != "{":
@@ -107,8 +135,18 @@ class PlanManager:
                     if "plan" in parsed:
                         return parsed
             except json.JSONDecodeError:
-                continue
-        
+                # Intentar con sanitización
+                try:
+                    sanitized = self._sanitize_json_str(response[i:])
+                    parsed, _ = decoder.raw_decode(sanitized)
+                    if isinstance(parsed, dict) and (
+                        ("action" in parsed and parsed.get("action") == "create_plan")
+                        or "plan" in parsed
+                    ):
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+
         return None
     
     def create_plan(
@@ -161,11 +199,19 @@ class PlanManager:
         # Construir el plan
         steps = []
         for i, step_data in enumerate(plan_content.get("steps", [])[:MAX_PLAN_STEPS], 1):
+            # Normalizar args: null/None -> {}
+            step_args = step_data.get("args")
+            if step_args is None:
+                step_args = {}
+            # Normalizar tool: "none"/"null" -> None
+            step_tool = step_data.get("tool")
+            if isinstance(step_tool, str) and step_tool.lower() in ("none", "null", ""):
+                step_tool = None
             step = PlanStep(
                 id=step_data.get("id", i),
                 description=step_data.get("description", f"Paso {i}"),
-                tool=step_data.get("tool"),
-                args=step_data.get("args", {}),
+                tool=step_tool,
+                args=step_args,
                 requires_approval=step_data.get("requires_approval", False),
             )
             steps.append(step)
