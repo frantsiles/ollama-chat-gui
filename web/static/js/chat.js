@@ -106,6 +106,16 @@ const Chat = {
         wsManager.on('response', (data) => {
             this.isProcessing = false;
             this.hideTypingIndicator();
+
+            // Mostrar mensaje de cancelación con estilo especial
+            if (data.status === 'cancelled') {
+                this.renderMessage({
+                    role: 'assistant',
+                    content: '⚠️ ' + (data.content || 'Ejecución cancelada.'),
+                    timestamp: new Date().toISOString()
+                });
+                return;
+            }
             
             if (data.content) {
                 this.renderMessage({
@@ -152,6 +162,11 @@ const Chat = {
 
         wsManager.on('agent_step', (data) => {
             this.updateTypingStep(data.message);
+        });
+
+        wsManager.on('cancelled', (data) => {
+            // Confirmación visual de que la cancelación fue recibida
+            this.updateTypingStep('⏸️ Cancelando...');
         });
 
         wsManager.on('approval_required', (data) => {
@@ -323,7 +338,7 @@ const Chat = {
     },
 
     /**
-     * Show typing indicator
+     * Show typing indicator with cancel button
      */
     showTypingIndicator() {
         const existing = document.getElementById('typing-indicator');
@@ -341,6 +356,14 @@ const Chat = {
                     <div class="typing-dot"></div>
                 </div>
                 <span>Pensando...</span>
+                <button
+                    style="margin-left:12px;padding:2px 10px;font-size:0.8em;
+                           border:1px solid #888;border-radius:4px;cursor:pointer;
+                           background:transparent;color:inherit;opacity:0.75"
+                    onclick="wsManager.sendCancel()"
+                    title="Cancelar ejecución">
+                    ✕ Cancelar
+                </button>
             </div>
         `;
 

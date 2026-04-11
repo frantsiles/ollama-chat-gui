@@ -17,30 +17,56 @@ from config import (
 )
 
 
+# ---------------------------------------------------------------------------
+# Registro global de instancias (singleton por workspace)
+# ---------------------------------------------------------------------------
+_RAG_REGISTRY: dict[str, "LocalRAG"] = {}
+
+
+def get_rag(workspace_root: Path) -> "LocalRAG":
+    """
+    Retorna la instancia de LocalRAG para el workspace dado.
+
+    Crea una nueva instancia si no existe. Al reutilizar la misma instancia
+    entre requests se aprovecha el caché de mtime sin re-escanear el disco.
+    """
+    key = str(workspace_root.resolve())
+    if key not in _RAG_REGISTRY:
+        _RAG_REGISTRY[key] = LocalRAG(workspace_root)
+    return _RAG_REGISTRY[key]
+
+
+# ---------------------------------------------------------------------------
+
+
 class LocalRAG:
     """
     Sistema de RAG local para recuperar contexto del workspace.
-    
+
     Usa búsqueda por tokens simples (bag of words) para encontrar
     chunks relevantes en los archivos del workspace.
+
+    Incluye caché por mtime: si un archivo no ha cambiado desde la última
+    lectura, se reutiliza el contenido en memoria sin volver a leer el disco.
     """
-    
+
     # Términos que activan el RAG
     TRIGGER_TERMS = (
         "proyecto", "readme", "repo", "repository", "arquitectura",
         "repositorio", "análisis", "analisis", "analiza", "código",
         "codigo", "source", "fuente", "estructura", "codebase",
     )
-    
+
     def __init__(self, workspace_root: Path):
         """
         Inicializa el sistema RAG.
-        
+
         Args:
             workspace_root: Raíz del workspace
         """
         self.workspace_root = workspace_root.resolve()
-        self._cache: dict[str, str] = {}  # path -> content
+        # caché por mtime: {str(path): (mtime_float, content_str)}
+        self._mtime_cache: dict[str, tuple[float, str]] = {}
     
     def should_activate(self, user_prompt: str) -> bool:
         """
@@ -94,21 +120,35 @@ class LocalRAG:
         return files
     
     def _read_file_safely(self, path: Path, max_chars: int) -> Optional[str]:
-        """Lee un archivo de texto de forma segura."""
+        """
+        Lee un archivo de texto de forma segura con caché por mtime.
+
+        Si el archivo no ha cambiado desde la última lectura, devuelve
+        el contenido cacheado sin acceder al disco.
+        """
         try:
+            mtime = path.stat().st_mtime
+            key = str(path)
+            cached = self._mtime_cache.get(key)
+            if cached is not None and cached[0] == mtime:
+                return cached[1][:max_chars]
+
             raw = path.read_bytes()
-            
-            # Intentar decodificar
             for encoding in ("utf-8", "latin-1"):
                 try:
                     text = raw.decode(encoding)
+                    self._mtime_cache[key] = (mtime, text)
                     return text[:max_chars]
                 except UnicodeDecodeError:
                     continue
-            
+
             return None
         except OSError:
             return None
+
+    def clear_cache(self) -> None:
+        """Vacía el caché de contenido de archivos."""
+        self._mtime_cache.clear()
     
     def _tokenize(self, text: str) -> List[str]:
         """Tokeniza texto en palabras."""

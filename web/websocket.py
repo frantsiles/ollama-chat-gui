@@ -30,7 +30,7 @@ from core.models import Conversation, Plan, PlanStatus, ToolCall
 from core.planner import PlanManager
 from llm.client import OllamaClient, OllamaClientError
 from web.state import Session, SessionManager
-from pathlib import Path as _Path  # re-export para evitar shadowing
+from web.metrics import MetricsCollector
 
 
 class ConnectionManager:
@@ -130,149 +130,181 @@ async def handle_chat_message(
     # --- Inyectar adjuntos en el contenido del mensaje ---
     content = await _build_full_content(raw_content, attachments_raw)
 
-    # Crear cliente y agente
-    client = OllamaClient(base_url=OLLAMA_BASE_URL)
-    agent = Agent(
-        client=client,
-        model=session.model,
-        workspace_root=Path(session.workspace_root),
-        current_cwd=Path(session.current_cwd),
-        temperature=session.temperature,
-        mode=session.mode,
-    )
-    agent.approval_manager.set_level(session.approval_level)
-    # Restaurar el sumario de contexto de sesiones anteriores
-    agent._context_summary = session.context_summary
+    # --- Cola por sesión: evitar ejecuciones concurrentes ---
+    lock = SessionManager.get_lock(session.id)
+    if lock.locked():
+        await websocket.send_json({
+            "type": "error",
+            "message": "⏳ El agente ya está procesando. Espéra o canélalo primero.",
+        })
+        return
 
-    # Notificar inicio
-    await websocket.send_json({"type": "start", "mode": session.mode})
+    # --- Métricas ---
+    metric = MetricsCollector.start(session.id, session.mode)
+    metric.prompt_chars = len(content)
 
-    try:
-        if session.mode == OperationMode.CHAT:
-            response = await asyncio.to_thread(
-                agent.chat,
-                content,
-                session.conversation,
-                [],  # attachments ya inyectados en content
-                images,
-            )
+    async with lock:
+        # --- Flag de cancelación (thread-safe) ---
+        cancel_flag = SessionManager.get_cancel_flag(session.id)
+        cancel_flag.clear()
 
-        elif session.mode == OperationMode.AGENT:
-            # --- Streaming de pasos del agente ---
-            step_queue: asyncio.Queue = asyncio.Queue()
-            loop = asyncio.get_running_loop()
+        def cancel_check() -> bool:
+            return cancel_flag.is_set()
 
-            def step_callback(msg: str) -> None:
-                loop.call_soon_threadsafe(step_queue.put_nowait, msg)
+        # Crear cliente y agente
+        client = OllamaClient(base_url=OLLAMA_BASE_URL)
+        agent = Agent(
+            client=client,
+            model=session.model,
+            workspace_root=Path(session.workspace_root),
+            current_cwd=Path(session.current_cwd),
+            temperature=session.temperature,
+            mode=session.mode,
+        )
+        agent.approval_manager.set_level(session.approval_level)
+        agent._context_summary = session.context_summary
 
-            agent_task = asyncio.create_task(
-                asyncio.to_thread(
-                    lambda: agent.run(
-                        content,
-                        session.conversation,
-                        [],  # attachments ya inyectados
-                        images,
-                        step_callback,
+        # --- RAG incremental (solo modo agent con keywords) ---
+        if session.mode == OperationMode.AGENT:
+            from rag.local_rag import get_rag
+            rag_instance = get_rag(Path(session.workspace_root))
+            if rag_instance.should_activate(raw_content):
+                rag_context, _ = rag_instance.retrieve(raw_content)
+                if rag_context:
+                    session.conversation.add_system_message(rag_context)
+
+        # Notificar inicio
+        await websocket.send_json({"type": "start", "mode": session.mode})
+
+        try:
+            if session.mode == OperationMode.CHAT:
+                response = await asyncio.to_thread(
+                    agent.chat,
+                    content,
+                    session.conversation,
+                    [],
+                    images,
+                )
+
+            elif session.mode == OperationMode.AGENT:
+                # --- Streaming de pasos + cancelación ---
+                step_queue: asyncio.Queue = asyncio.Queue()
+                loop = asyncio.get_running_loop()
+
+                def step_callback(msg: str) -> None:
+                    loop.call_soon_threadsafe(step_queue.put_nowait, msg)
+
+                agent_task = asyncio.create_task(
+                    asyncio.to_thread(
+                        lambda: agent.run(
+                            content,
+                            session.conversation,
+                            [],
+                            images,
+                            step_callback,
+                            cancel_check,
+                        )
                     )
                 )
-            )
 
-            # Emitir pasos mientras el agente trabaja
-            while not agent_task.done():
-                try:
+                while not agent_task.done():
+                    try:
+                        step_msg = step_queue.get_nowait()
+                        await websocket.send_json({
+                            "type": "agent_step",
+                            "message": step_msg,
+                        })
+                    except asyncio.QueueEmpty:
+                        await asyncio.sleep(0.1)
+
+                while not step_queue.empty():
                     step_msg = step_queue.get_nowait()
                     await websocket.send_json({
                         "type": "agent_step",
                         "message": step_msg,
                     })
-                except asyncio.QueueEmpty:
-                    await asyncio.sleep(0.1)
 
-            # Vaciar cola restante
-            while not step_queue.empty():
-                step_msg = step_queue.get_nowait()
-                await websocket.send_json({
-                    "type": "agent_step",
-                    "message": step_msg,
-                })
+                exc = agent_task.exception()
+                if exc:
+                    raise exc
+                response = agent_task.result()
+                metric.steps = len(response.trace)
 
-            # Propagar excepción si la tarea falló
-            exc = agent_task.exception()
-            if exc:
-                raise exc
-            response = agent_task.result()
-
-        elif session.mode == OperationMode.PLAN:
-            planner = PlanManager(client=client, model=session.model)
-            plan = await asyncio.to_thread(
-                planner.create_plan,
-                content,
-                session.conversation,
-            )
-            if plan:
-                session.current_plan = plan.to_dict()
-                await websocket.send_json({
-                    "type": "plan_created",
-                    "plan": plan.to_dict(),
-                })
+            elif session.mode == OperationMode.PLAN:
+                planner = PlanManager(client=client, model=session.model)
+                plan = await asyncio.to_thread(
+                    planner.create_plan,
+                    content,
+                    session.conversation,
+                )
+                if plan:
+                    session.current_plan = plan.to_dict()
+                    await websocket.send_json({
+                        "type": "plan_created",
+                        "plan": plan.to_dict(),
+                    })
+                else:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "No se pudo crear el plan",
+                    })
+                metric.finish("completed")
+                return
             else:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "No se pudo crear el plan",
-                })
-            return
-        else:
-            response = AgentResponse(
-                content="Modo no soportado",
-                status="error",
-            )
+                response = AgentResponse(
+                    content="Modo no soportado",
+                    status="error",
+                )
 
-        # --- Persistir sumario de contexto actualizado ---
-        if agent._context_summary:
-            session.context_summary = agent._context_summary
+            # --- Persistir sumario de contexto actualizado ---
+            if agent._context_summary:
+                session.context_summary = agent._context_summary
 
-        # Enviar respuesta
-        await websocket.send_json({
-            "type": "response",
-            "content": response.content,
-            "status": response.status,
-            "trace": response.trace,
-            "tool_results": [tr.to_dict() for tr in response.tool_results],
-        })
-
-        # Actualizar CWD si cambió
-        if response.new_cwd:
-            session.current_cwd = response.new_cwd
-
-        # Manejar aprobación pendiente
-        if response.status == "awaiting_approval":
-            pending_tool = agent.state.pending_approval
-            session.pending_approval = {
-                "tool_call": str(pending_tool) if pending_tool else "",
-                "tool_call_data": pending_tool.to_dict() if pending_tool else None,
-                "description": response.content,
-            }
+            # Enviar respuesta
             await websocket.send_json({
-                "type": "approval_required",
-                "pending": session.pending_approval,
+                "type": "response",
+                "content": response.content,
+                "status": response.status,
+                "trace": response.trace,
+                "tool_results": [tr.to_dict() for tr in response.tool_results],
             })
 
-        # Guardar trace
-        session.agent_trace = response.trace
+            # Actualizar CWD si cambió
+            if response.new_cwd:
+                session.current_cwd = response.new_cwd
 
-    except OllamaClientError as e:
-        await websocket.send_json({
-            "type": "error",
-            "message": str(e),
-        })
-    except Exception as e:
-        await websocket.send_json({
-            "type": "error",
-            "message": f"Error interno: {str(e)}",
-        })
-    finally:
-        # Persistir sesión tras cada request (incluso si hubo error)
-        SessionManager.save(session)
+            # Manejar aprobación pendiente
+            if response.status == "awaiting_approval":
+                pending_tool = agent.state.pending_approval
+                session.pending_approval = {
+                    "tool_call": str(pending_tool) if pending_tool else "",
+                    "tool_call_data": pending_tool.to_dict() if pending_tool else None,
+                    "description": response.content,
+                }
+                await websocket.send_json({
+                    "type": "approval_required",
+                    "pending": session.pending_approval,
+                })
+
+            # Guardar trace y métricas
+            session.agent_trace = response.trace
+            metric.finish(response.status)
+
+        except OllamaClientError as e:
+            metric.finish("error")
+            await websocket.send_json({
+                "type": "error",
+                "message": str(e),
+            })
+        except Exception as e:
+            metric.finish("error")
+            await websocket.send_json({
+                "type": "error",
+                "message": f"Error interno: {str(e)}",
+            })
+        finally:
+            # Persistir sesión tras cada request (incluso si hubo error)
+            SessionManager.save(session)
 
 
 async def handle_approval(
@@ -429,6 +461,19 @@ async def handle_plan_action(
             })
 
 
+async def handle_cancel(
+    websocket: WebSocket,
+    session: Session,
+    data: Dict[str, Any],
+) -> None:
+    """Cancela la ejecución del agente en curso."""
+    SessionManager.request_cancel(session.id)
+    await websocket.send_json({
+        "type": "cancelled",
+        "message": "Cancelación solicitada. El agente se detendrá en el próximo paso.",
+    })
+
+
 async def handle_stream_chat(
     websocket: WebSocket,
     session: Session,
@@ -524,6 +569,8 @@ async def websocket_handler(websocket: WebSocket, session_id: str):
                 await handle_approval(websocket, session, data)
             elif msg_type == "plan":
                 await handle_plan_action(websocket, session, data)
+            elif msg_type == "cancel":
+                await handle_cancel(websocket, session, data)
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
             else:

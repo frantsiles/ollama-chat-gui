@@ -278,6 +278,7 @@ class Agent:
         attachments: Optional[List[str]] = None,
         images: Optional[List[str]] = None,
         step_callback: Optional[Callable[[str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> AgentResponse:
         """
         Modo AGENT: Ciclo ReAct con herramientas.
@@ -312,6 +313,20 @@ class Agent:
         
         for step in range(1, MAX_AGENT_STEPS + 1):
             self.state.step_count = step
+
+            # Verificar cancelación antes de consultar al modelo
+            if cancel_check and cancel_check():
+                cancel_msg = "Cancelado por el usuario."
+                self.state.add_trace(cancel_msg)
+                self.state.is_running = False
+                return AgentResponse(
+                    content="Ejecución cancelada por el usuario.",
+                    status="cancelled",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                )
+
             trace_consulta = f"Paso {step}: consultando al modelo"
             self.state.add_trace(trace_consulta)
             if step_callback:

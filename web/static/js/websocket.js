@@ -178,6 +178,13 @@ class WebSocketManager {
     }
 
     /**
+     * Send cancel request
+     */
+    sendCancel() {
+        return this.send({ type: 'cancel' });
+    }
+
+    /**
      * Register event handler
      */
     on(event, handler) {

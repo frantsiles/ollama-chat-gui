@@ -92,6 +92,39 @@ class SessionManager:
 
     _sessions: Dict[str, Session] = {}
     _db: Any = None  # PersistenceDB | None
+    _session_locks: Dict[str, Any] = {}   # session_id → asyncio.Lock
+    _cancel_flags: Dict[str, Any] = {}    # session_id → threading.Event
+
+    # ------------------------------------------------------------------
+    # Concurrencia y cancelación
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def get_lock(cls, session_id: str) -> Any:
+        """
+        Retorna (o crea) el asyncio.Lock de la sesión.
+        Garantiza que sólo un agente se ejecute por sesión a la vez.
+        """
+        if session_id not in cls._session_locks:
+            import asyncio as _asyncio
+            cls._session_locks[session_id] = _asyncio.Lock()
+        return cls._session_locks[session_id]
+
+    @classmethod
+    def get_cancel_flag(cls, session_id: str) -> Any:
+        """
+        Retorna (o crea) el threading.Event de cancelación de la sesión.
+        Usa threading.Event (no asyncio.Event) para ser seguro desde hilos.
+        """
+        if session_id not in cls._cancel_flags:
+            import threading as _threading
+            cls._cancel_flags[session_id] = _threading.Event()
+        return cls._cancel_flags[session_id]
+
+    @classmethod
+    def request_cancel(cls, session_id: str) -> None:
+        """Solicita la cancelación del agente en ejecución para la sesión."""
+        cls.get_cancel_flag(session_id).set()
 
     # ------------------------------------------------------------------
     # Inicialización de persistencia

@@ -225,3 +225,14 @@ async def get_current_plan(session_id: str) -> Dict[str, Any]:
 async def health_check() -> Dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
+
+
+# =============================================================================
+# Métricas
+# =============================================================================
+
+@router.get("/metrics")
+async def get_metrics() -> Dict[str, Any]:
+    """Retorna métricas de rendimiento del agente."""
+    from web.metrics import MetricsCollector
+    return {"metrics": MetricsCollector.summary()}
