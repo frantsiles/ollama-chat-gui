@@ -56,6 +56,13 @@ python -m py_compile core/*.py llm/*.py tools/*.py security/*.py rag/*.py ui/*.p
   - `CHAT_DB_PATH` — SQLite sessions database
   - `RAG_PROACTIVE_SCORE_THRESHOLD` — min cosine score for proactive suggestions (default `0.75`)
   - `RAG_SEMANTIC_TOP_K` — chunks retrieved per query (default `6`)
+  - `MEMORY_ENABLED` — enable long-term memory system (default `true`)
+  - `MEMORY_AUTO_EXTRACT` — auto-extract memories from conversations (default `true`)
+  - `MEMORY_MAX_WORKSPACE_ITEMS` — max workspace memories (default `50`)
+  - `MEMORY_MAX_PROFILE_ITEMS` — max user profile traits (default `30`)
+  - `REFLECTION_ENABLED` — enable self-correction on responses (default `true`)
+  - `REFLECTION_TEMPERATURE` — LLM temperature for reflection (default `0.3`)
+  - `MAX_STEP_RETRIES` — retries per failed plan step (default `3`)
 
 ## Architecture map
 
@@ -66,7 +73,8 @@ ollama-chat-gui/
 ├── app.py                  # Legacy monolith (deprecated)
 ├── config.py               # Centralized configuration (all env overridable)
 ├── core/                   # Core agent logic
-│   ├── agent.py            # Agent: Chat / ReAct / Plan modes
+│   ├── agent.py            # Agent: Chat / ReAct / Plan modes + reflection + retry
+│   ├── memory.py           # Long-term memory: workspace memories + user profile
 │   ├── planner.py          # Plan creation and management
 │   ├── session.py          # Conversation session management
 │   └── models.py           # Data models (Message, Plan, ToolCall, etc.)
@@ -91,6 +99,7 @@ ollama-chat-gui/
 ├── web/                    # FastAPI backend
 │   ├── server.py           # FastAPI app + CORS + static files
 │   ├── api.py              # General REST endpoints
+│   ├── api_memory.py       # Memory + profile REST endpoints
 │   ├── api_rag.py          # RAG + KB REST endpoints
 │   ├── websocket.py        # WebSocket handler (real-time chat)
 │   ├── state.py            # In-memory session management
@@ -118,7 +127,19 @@ ollama-chat-gui/
 - `Agent` class handles all three modes
 - `chat()` - simple chat without tools
 - `run()` - ReAct cycle with automatic tool execution
-- `execute_plan_step()` - step-by-step plan execution
+- `execute_plan_step()` - step-by-step plan execution with intelligent retry
+- `_reflect_on_response()` - self-correction before delivering responses
+- `_retry_failed_step()` - generates alternative approaches when a plan step fails (up to MAX_STEP_RETRIES)
+- `_maybe_extract_memories()` - auto-extracts memories from conversations via LLM
+
+#### 1b) Long-term Memory (`core/memory.py`)
+- `MemoryStore` — two-layer memory system with SQLite backing
+- **Workspace memories** (Capa A): technical facts per project (architecture, decisions, patterns, error fixes)
+- **User profile** (Capa B): global communication preferences (language, tone, conventions)
+- `extract_memories()` — LLM-driven classification of conversation facts into workspace vs profile
+- `build_memory_context()` — generates prompt injection blocks for both layers
+- Profile traits are injected into ALL sessions; workspace memories only into matching workspace sessions
+- Profile does NOT interfere with role-play or hypothetical scenarios
 
 #### 2) Tool System (`tools/`)
 - `BaseTool` ABC defines tool interface
@@ -160,6 +181,7 @@ ollama-chat-gui/
 - **RAG/embeddings**: Entry point is `rag/semantic_rag.py`; ChromaDB logic in `rag/vector_store.py`
 - **Knowledge Base endpoints**: Edit `web/api_rag.py`
 - **Add REST endpoint**: Add to `web/api.py` or `web/api_rag.py` depending on domain
+- **Memory system**: Entry point is `core/memory.py`; persistence in `web/persistence.py`; REST in `web/api_memory.py`
 - **WebSocket message types**: Add handler in `web/websocket.py`
 
 ## WebSocket message types
@@ -183,6 +205,7 @@ ollama-chat-gui/
 | `plan_step_complete` | Step finished |
 | `approval_required` | Tool needs user approval |
 | `rag_suggestion` | Proactive file suggestions based on conversation context |
+| `memory_updated` | Notification when new memories were extracted |
 | `stream_start` / `stream_chunk` / `stream_end` | Streaming tokens |
 | `cancelled` | Agent cancelled |
 | `error` | Error message |
@@ -204,6 +227,16 @@ ollama-chat-gui/
 | POST | `/api/kb/ingest-url` | Ingest URL into KB |
 | DELETE | `/api/kb/documents/{doc_id}` | Delete KB document |
 | POST | `/api/kb/query` | Semantic search in KB |
+
+## REST API endpoints (Memory)
+| Method | Path | Description |
+|---|---|---|
+| GET | `/api/memory/workspace/{path}` | List workspace memories |
+| POST | `/api/memory/workspace/{path}` | Add workspace memory |
+| DELETE | `/api/memory/workspace/item/{id}` | Delete workspace memory |
+| GET | `/api/memory/profile` | List user profile traits |
+| POST | `/api/memory/profile` | Add profile trait |
+| DELETE | `/api/memory/profile/{id}` | Delete profile trait |
 
 ## Migration from legacy app.py
 The new modular structure replaces the monolithic `app.py`. Key differences:

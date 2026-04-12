@@ -115,6 +115,21 @@ KB_CHUNK_CHARS: int = 1_000
 KB_MAX_DOCUMENTS: int = 500
 
 # =============================================================================
+# Long-term Memory
+# =============================================================================
+MEMORY_ENABLED: bool = os.getenv("MEMORY_ENABLED", "true").lower() != "false"
+MEMORY_AUTO_EXTRACT: bool = os.getenv("MEMORY_AUTO_EXTRACT", "true").lower() != "false"
+MEMORY_MAX_WORKSPACE_ITEMS: int = int(os.getenv("MEMORY_MAX_WORKSPACE_ITEMS", "50"))
+MEMORY_MAX_PROFILE_ITEMS: int = int(os.getenv("MEMORY_MAX_PROFILE_ITEMS", "30"))
+
+# =============================================================================
+# Reflection & Self-Correction
+# =============================================================================
+REFLECTION_ENABLED: bool = os.getenv("REFLECTION_ENABLED", "true").lower() != "false"
+REFLECTION_TEMPERATURE: float = float(os.getenv("REFLECTION_TEMPERATURE", "0.3"))
+MAX_STEP_RETRIES: int = int(os.getenv("MAX_STEP_RETRIES", "3"))
+
+# =============================================================================
 # Chat Export
 # =============================================================================
 CHAT_EXPORT_DIRNAME = ".chat_exports"

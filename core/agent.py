@@ -13,6 +13,9 @@ from config import (
     MAX_AGENT_STEPS,
     MAX_CONTEXT_MESSAGES,
     MAX_CONTEXT_MESSAGES_KEEP,
+    MAX_STEP_RETRIES,
+    REFLECTION_ENABLED,
+    REFLECTION_TEMPERATURE,
     OperationMode,
 )
 from core.models import (
@@ -90,6 +93,10 @@ class Agent:
         self.state = AgentState(mode=mode)
         # Running lightweight summary of old conversation turns
         self._context_summary: str = ""
+        # Memory context string injected into system prompt
+        self._memory_context: str = ""
+        # Optional MemoryStore for auto-extraction
+        self._memory_store: Optional[Any] = None
     
     def set_mode(self, mode: str) -> None:
         """Cambia el modo de operación."""
@@ -179,9 +186,11 @@ class Agent:
         """Construye la lista de mensajes para el modelo (con ventana de contexto)."""
         messages = []
 
-        # System prompt
+        # System prompt con memoria inyectada
         if system_prompt is None:
-            system_prompt = PromptManager.get_system_prompt(self.mode)
+            system_prompt = PromptManager.get_system_prompt_with_memory(
+                self.mode, self._memory_context
+            )
 
         messages.append({"role": "system", "content": system_prompt})
 
@@ -225,6 +234,180 @@ class Agent:
         
         return ToolRegistry.extract_tool_call(repaired)
     
+    # ------------------------------------------------------------------
+    # Reflexión crítica (auto-revisión de respuestas)
+    # ------------------------------------------------------------------
+
+    def _reflect_on_response(
+        self,
+        response: str,
+        conversation: Conversation,
+    ) -> str:
+        """
+        Revisa la respuesta antes de entregarla.
+        Si detecta problemas, retorna una versión corregida.
+        """
+        if not REFLECTION_ENABLED:
+            return response
+
+        from llm.prompts import REFLECTION_PROMPT
+
+        # Contexto: últimos mensajes para que el revisor entienda la conversación
+        recent = [
+            f"{m.role.value}: {m.content[:500]}"
+            for m in conversation.messages[-4:]
+            if m.content
+        ]
+        context = "\n".join(recent)
+
+        messages = [
+            {"role": "system", "content": REFLECTION_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"Contexto de la conversación:\n{context}\n\n"
+                    f"Respuesta a revisar:\n{response}"
+                ),
+            },
+        ]
+
+        try:
+            raw = self.client.chat(
+                model=self.model,
+                messages=messages,
+                options={"temperature": REFLECTION_TEMPERATURE},
+            ).strip()
+            if raw.startswith("```"):
+                lines = raw.splitlines()
+                raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+            data = _json.loads(raw)
+            if data.get("status") == "needs_fix" and data.get("corrected_response"):
+                self.state.add_trace(
+                    f"Reflexión: corregida ({', '.join(data.get('issues', []))})"
+                )
+                return data["corrected_response"]
+        except Exception:
+            pass  # Reflexión fallida = usar respuesta original
+
+        return response
+
+    # ------------------------------------------------------------------
+    # Retry inteligente de pasos de plan
+    # ------------------------------------------------------------------
+
+    def _retry_failed_step(
+        self,
+        step_description: str,
+        tool_name: str,
+        original_args: Dict[str, Any],
+        error_message: str,
+        attempt: int,
+        conversation: Conversation,
+    ) -> Optional[ToolCall]:
+        """
+        Genera un ToolCall alternativo para reintentar un paso fallido.
+
+        Args:
+            step_description: Qué intenta hacer el paso.
+            tool_name: Herramienta que falló.
+            original_args: Args originales.
+            error_message: Mensaje de error.
+            attempt: Número de intento (1-based).
+            conversation: Conversación actual (para contexto).
+
+        Returns:
+            ToolCall alternativo o None si es imposible.
+        """
+        from llm.prompts import STEP_RETRY_PROMPT
+
+        # Resultados previos como contexto
+        prev_results: List[str] = []
+        for msg in conversation.messages:
+            if msg.role == MessageRole.SYSTEM and "Observation" in msg.content:
+                prev_results.append(msg.content)
+
+        messages = [
+            {"role": "system", "content": STEP_RETRY_PROMPT},
+        ]
+        if prev_results:
+            messages.append({
+                "role": "system",
+                "content": (
+                    "Resultados de pasos anteriores:\n"
+                    + "\n---\n".join(prev_results[-5:])
+                ),
+            })
+        messages.append({
+            "role": "user",
+            "content": (
+                f"Paso: {step_description}\n"
+                f"Herramienta: {tool_name}\n"
+                f"Args originales: {_json.dumps(original_args, ensure_ascii=False)}\n"
+                f"Error: {error_message}\n"
+                f"Intento: {attempt} de {MAX_STEP_RETRIES}\n\n"
+                "Genera la corrección. SOLO JSON."
+            ),
+        })
+
+        try:
+            raw = self._call_model(messages).strip()
+            if raw.startswith("```"):
+                lines = raw.splitlines()
+                raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+            data = _json.loads(raw)
+
+            if data.get("strategy") == "impossible":
+                self.state.add_trace(
+                    f"Retry imposible: {data.get('reason', 'sin razón')}"
+                )
+                return None
+
+            tool = data.get("tool", tool_name)
+            args = data.get("args", {})
+            if isinstance(args, dict) and tool:
+                self.state.add_trace(
+                    f"Retry intento {attempt}: {data.get('strategy', 'corrección')}"
+                )
+                return ToolCall(tool=tool, args=args)
+        except Exception:
+            self.state.add_trace(f"Retry intento {attempt}: no se pudo generar alternativa")
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Extracción de memorias post-respuesta
+    # ------------------------------------------------------------------
+
+    def _maybe_extract_memories(
+        self,
+        user_input: str,
+        response_content: str,
+    ) -> None:
+        """Extrae memorias de la conversación si hay MemoryStore disponible."""
+        if not self._memory_store:
+            return
+
+        def llm_call(messages: List[Dict[str, Any]]) -> str:
+            return self.client.chat(
+                model=self.model,
+                messages=messages,
+                options={"temperature": 0.2},
+            )
+
+        try:
+            self._memory_store.extract_memories(
+                llm_call=llm_call,
+                workspace_root=str(self.workspace_root),
+                user_message=user_input,
+                assistant_response=response_content,
+            )
+        except Exception:
+            pass  # No romper el flujo por errores de memoria
+
+    # ------------------------------------------------------------------
+    # Modos de operación
+    # ------------------------------------------------------------------
+
     def chat(
         self,
         user_input: str,
@@ -266,8 +449,14 @@ class Agent:
                 error=str(e),
             )
         
+        # Reflexión crítica
+        response = self._reflect_on_response(response, conversation)
+
         # Agregar respuesta
         conversation.add_assistant_message(response)
+
+        # Extraer memorias en background
+        self._maybe_extract_memories(user_input, response)
         
         return AgentResponse(
             content=response,
@@ -364,8 +553,15 @@ class Agent:
             if not tool_call:
                 # No hay tool call, es respuesta final
                 self.state.add_trace(f"Paso {step}: respuesta final sin tool")
+
+                # Reflexión crítica antes de entregar
+                response = self._reflect_on_response(response, conversation)
+
                 conversation.add_assistant_message(response)
                 self.state.is_running = False
+
+                # Extraer memorias
+                self._maybe_extract_memories(user_input, response)
                 
                 return AgentResponse(
                     content=response,
@@ -724,9 +920,61 @@ class Agent:
                 current_step.status = StepStatus.COMPLETED
                 self.state.add_trace(f"Paso {current_step.id} completado")
             else:
-                current_step.status = StepStatus.FAILED
-                current_step.error_message = result.error
-                self.state.add_trace(f"Paso {current_step.id} falló: {result.error}")
+                # --- Retry inteligente ---
+                retry_success = False
+                if auto_execute:
+                    for attempt in range(1, MAX_STEP_RETRIES + 1):
+                        self.state.add_trace(
+                            f"Paso {current_step.id} falló: {result.error} "
+                            f"(reintentando {attempt}/{MAX_STEP_RETRIES})"
+                        )
+                        if step_callback:
+                            step_callback(
+                                f"Reintentando paso {current_step.id} "
+                                f"({attempt}/{MAX_STEP_RETRIES})",
+                                plan.to_dict(),
+                            )
+
+                        retry_call = self._retry_failed_step(
+                            step_description=current_step.description,
+                            tool_name=effective_tool,
+                            original_args=resolved_args,
+                            error_message=result.error or result.output,
+                            attempt=attempt,
+                            conversation=conversation,
+                        )
+                        if not retry_call:
+                            break
+
+                        # Validar Python si aplica
+                        if (
+                            retry_call.tool == "execute_python"
+                            and "code" in retry_call.args
+                        ):
+                            retry_call.args["code"] = self._try_fix_python_code(
+                                retry_call.args["code"]
+                            )
+
+                        result = self.tool_registry.execute(retry_call)
+                        current_step.result = result
+                        if result.new_cwd:
+                            self.set_cwd(Path(result.new_cwd))
+                        if result.success:
+                            current_step.status = StepStatus.COMPLETED
+                            self.state.add_trace(
+                                f"Paso {current_step.id} completado tras reintento {attempt}"
+                            )
+                            retry_success = True
+                            break
+                        # Actualizar args para el próximo intento
+                        resolved_args = retry_call.args
+
+                if not retry_success:
+                    current_step.status = StepStatus.FAILED
+                    current_step.error_message = result.error
+                    self.state.add_trace(
+                        f"Paso {current_step.id} falló definitivamente: {result.error}"
+                    )
 
             # Inyectar resultado en la conversación para que pasos
             # posteriores puedan referenciarlo al resolver sus args

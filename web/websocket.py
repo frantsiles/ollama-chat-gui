@@ -22,6 +22,7 @@ from config import (
     MAX_ATTACHMENT_CHARS_PER_FILE,
     MAX_ATTACHMENT_CHARS_TOTAL,
     MAX_INPUT_CHARS,
+    MEMORY_ENABLED,
     OLLAMA_BASE_URL,
     OperationMode,
 )
@@ -164,6 +165,16 @@ async def handle_chat_message(
         agent.approval_manager.set_level(session.approval_level)
         agent._context_summary = session.context_summary
 
+        # --- Memoria a largo plazo ---
+        memory_store = None
+        if MEMORY_ENABLED and SessionManager._db:
+            from core.memory import MemoryStore
+            memory_store = MemoryStore(SessionManager._db)
+            agent._memory_store = memory_store
+            agent._memory_context = memory_store.build_memory_context(
+                session.workspace_root
+            )
+
         # --- RAG semántico (workspace + KB) ---
         # Activo en modos Agent y Plan; en Chat es opt-in por keywords.
         from rag.semantic_rag import get_semantic_rag
@@ -293,6 +304,22 @@ async def handle_chat_message(
             # Guardar trace y métricas
             session.agent_trace = response.trace
             metric.finish(response.status)
+
+            # --- Emitir evento de memoria si hubo extracción ---
+            if memory_store and response.status == "completed":
+                try:
+                    ws_memories = memory_store.get_workspace_memories(
+                        session.workspace_root
+                    )
+                    profile_traits = memory_store.get_profile_traits()
+                    if ws_memories or profile_traits:
+                        await websocket.send_json({
+                            "type": "memory_updated",
+                            "workspace_memories": len(ws_memories),
+                            "profile_traits": len(profile_traits),
+                        })
+                except Exception:
+                    pass
 
             # --- Sugerencias proactivas (background, no bloquea) ---
             # Se generan después de enviar la respuesta para no añadir latencia.

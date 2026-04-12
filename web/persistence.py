@@ -48,6 +48,26 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_session
     ON messages (session_id, id);
+
+CREATE TABLE IF NOT EXISTS workspace_memories (
+    id              TEXT PRIMARY KEY,
+    workspace_root  TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    category        TEXT NOT NULL DEFAULT 'fact',
+    created_at      TEXT NOT NULL,
+    active          INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE INDEX IF NOT EXISTS idx_ws_memories_workspace
+    ON workspace_memories (workspace_root, active);
+
+CREATE TABLE IF NOT EXISTS user_profile (
+    id              TEXT PRIMARY KEY,
+    content         TEXT NOT NULL,
+    trait_type      TEXT NOT NULL DEFAULT 'preference',
+    created_at      TEXT NOT NULL,
+    active          INTEGER NOT NULL DEFAULT 1
+);
 """
 
 
@@ -264,3 +284,119 @@ class PersistenceDB:
         except sqlite3.Error as exc:
             logger.error("Error cleaning old sessions: %s", exc)
             return 0
+
+    # ------------------------------------------------------------------
+    # Workspace Memories
+    # ------------------------------------------------------------------
+
+    def save_workspace_memory(
+        self,
+        memory_id: str,
+        workspace_root: str,
+        content: str,
+        category: str = "fact",
+    ) -> None:
+        """Persiste una memoria de workspace."""
+        now = datetime.now().isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO workspace_memories (id, workspace_root, content, category, created_at, active)
+                    VALUES (?, ?, ?, ?, ?, 1)
+                    ON CONFLICT(id) DO UPDATE SET
+                        content  = excluded.content,
+                        category = excluded.category,
+                        active   = 1
+                    """,
+                    (memory_id, workspace_root, content, category, now),
+                )
+        except sqlite3.Error as exc:
+            logger.error("Error saving workspace memory: %s", exc)
+
+    def load_workspace_memories(
+        self, workspace_root: str, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """Carga memorias activas para un workspace."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT id, content, category, created_at "
+                    "FROM workspace_memories "
+                    "WHERE workspace_root = ? AND active = 1 "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (workspace_root, limit),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except sqlite3.Error as exc:
+            logger.error("Error loading workspace memories: %s", exc)
+            return []
+
+    def delete_workspace_memory(self, memory_id: str) -> bool:
+        """Soft-delete de una memoria de workspace."""
+        try:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "UPDATE workspace_memories SET active = 0 WHERE id = ?",
+                    (memory_id,),
+                )
+                return cur.rowcount > 0
+        except sqlite3.Error as exc:
+            logger.error("Error deleting workspace memory: %s", exc)
+            return False
+
+    # ------------------------------------------------------------------
+    # User Profile
+    # ------------------------------------------------------------------
+
+    def save_profile_trait(
+        self,
+        trait_id: str,
+        content: str,
+        trait_type: str = "preference",
+    ) -> None:
+        """Persiste un rasgo del perfil de usuario."""
+        now = datetime.now().isoformat()
+        try:
+            with self._connect() as conn:
+                conn.execute(
+                    """
+                    INSERT INTO user_profile (id, content, trait_type, created_at, active)
+                    VALUES (?, ?, ?, ?, 1)
+                    ON CONFLICT(id) DO UPDATE SET
+                        content    = excluded.content,
+                        trait_type = excluded.trait_type,
+                        active     = 1
+                    """,
+                    (trait_id, content, trait_type, now),
+                )
+        except sqlite3.Error as exc:
+            logger.error("Error saving profile trait: %s", exc)
+
+    def load_profile_traits(self, limit: int = 30) -> List[Dict[str, Any]]:
+        """Carga rasgos activos del perfil de usuario."""
+        try:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    "SELECT id, content, trait_type, created_at "
+                    "FROM user_profile WHERE active = 1 "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [dict(r) for r in rows]
+        except sqlite3.Error as exc:
+            logger.error("Error loading profile traits: %s", exc)
+            return []
+
+    def delete_profile_trait(self, trait_id: str) -> bool:
+        """Soft-delete de un rasgo del perfil."""
+        try:
+            with self._connect() as conn:
+                cur = conn.execute(
+                    "UPDATE user_profile SET active = 0 WHERE id = ?",
+                    (trait_id,),
+                )
+                return cur.rowcount > 0
+        except sqlite3.Error as exc:
+            logger.error("Error deleting profile trait: %s", exc)
+            return False

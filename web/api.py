@@ -12,9 +12,11 @@ from config import ApprovalLevel, OLLAMA_BASE_URL, OperationMode
 from llm.client import OllamaClient, OllamaClientError
 from web.state import Session, SessionManager
 from web.api_rag import router as rag_router
+from web.api_memory import router as memory_router
 
 router = APIRouter(prefix="/api", tags=["api"])
 router.include_router(rag_router)
+router.include_router(memory_router)
 
 
 # =============================================================================

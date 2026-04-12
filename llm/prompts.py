@@ -103,6 +103,76 @@ Herramientas disponibles:
 
 
 # =============================================================================
+# Memory Extraction Prompt
+# =============================================================================
+
+MEMORY_EXTRACTION_PROMPT = """\
+Eres un extractor de memorias. Analiza la conversación y extrae SOLO hechos \
+importantes que valga la pena recordar para futuras sesiones.
+
+Clasifica cada hecho en una de dos categorías:
+
+1. **workspace**: Hechos técnicos del proyecto (arquitectura, decisiones, \
+patrones usados, errores resueltos, configuraciones clave).
+   - category: fact | decision | pattern | error_fix
+
+2. **profile**: Preferencias de comunicación del usuario (idioma preferido, \
+nivel de detalle, tono, convenciones de código).
+   - trait_type: communication | preference | convention
+
+Reglas:
+- NO extraigas información trivial o conversacional.
+- NO repitas memorias que ya podrían existir.
+- Si no hay nada relevante, retorna listas vacías.
+- Máximo 3 items por categoría por interacción.
+- Sé conciso: cada memoria debe ser una frase clara.
+
+Responde SOLO JSON válido, sin markdown ni texto extra:
+{"workspace": [{"content": "...", "category": "fact"}], "profile": [{"content": "...", "trait_type": "preference"}]}
+"""
+
+# =============================================================================
+# Reflection Prompt
+# =============================================================================
+
+REFLECTION_PROMPT = """\
+Eres un revisor crítico interno. Analiza la siguiente respuesta que está a punto \
+de ser entregada al usuario y evalúa:
+
+1. ¿Se hizo alguna SUPOSICIÓN sin verificar?
+2. ¿La respuesta CONTRADICE el objetivo principal de la conversación?
+3. ¿Hay ERRORES LÓGICOS o información incorrecta?
+4. ¿Falta información CRUCIAL que el usuario necesita?
+
+Si TODO está bien, responde EXACTAMENTE: {"status": "ok"}
+
+Si hay problemas, responde JSON:
+{"status": "needs_fix", "issues": ["descripción del problema"], "corrected_response": "respuesta corregida completa"}
+
+Nunca respondas con texto libre. SOLO JSON.
+"""
+
+# =============================================================================
+# Step Retry Prompt
+# =============================================================================
+
+STEP_RETRY_PROMPT = """\
+Un paso de un plan de ejecución ha fallado. Analiza el error y genera una \
+solución alternativa.
+
+Debes responder SOLO JSON válido con la corrección:
+{"strategy": "descripción breve de la estrategia", "tool": "nombre_tool", "args": {...}}
+
+Estrategias disponibles según el intento:
+- Intento 1: Corregir los argumentos (typos, rutas, valores incorrectos).
+- Intento 2: Cambiar el enfoque (usar otra herramienta o método distinto).
+- Intento 3: Simplificar (dividir en operaciones más básicas).
+
+Si es IMPOSIBLE completar el paso, responde: {"strategy": "impossible", "reason": "..."}
+"""
+
+
+# =============================================================================
 # Context Templates
 # =============================================================================
 
@@ -203,6 +273,18 @@ class PromptManager:
             status=status,
         )
     
+    @staticmethod
+    def get_system_prompt_with_memory(
+        mode: str,
+        memory_context: str = "",
+        custom_instructions: Optional[str] = None,
+    ) -> str:
+        """Retorna system prompt con memoria inyectada."""
+        base = PromptManager.get_system_prompt(mode, custom_instructions)
+        if memory_context:
+            return f"{memory_context}\n\n{base}"
+        return base
+
     @staticmethod
     def get_tool_repair_prompt() -> str:
         """Prompt para reparar solicitudes de tool malformadas."""
