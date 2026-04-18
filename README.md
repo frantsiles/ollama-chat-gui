@@ -33,6 +33,22 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Serena MCP (desarrollo)
+
+Para iniciar Serena apuntando a este proyecto:
+
+```bash
+./scripts/start-serena.sh
+```
+
+Comando directo equivalente:
+
+```bash
+uvx --from git+https://github.com/oraios/serena serena start-mcp-server --project /home/frantsiles/ollama-chat-gui
+```
+
+Luego puedes abrir el dashboard en la URL que Serena muestre al iniciar (por ejemplo `http://127.0.0.1:24283/dashboard/index.html`).
+
 ## Ejecución
 
 ```bash
