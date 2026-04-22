@@ -61,6 +61,8 @@ class ToolRegistry:
         self.workspace_root = workspace_root.resolve()
         self.current_cwd = current_cwd.resolve()
         self._instances: Dict[str, BaseTool] = {}
+        self._dynamic_ollama_tools: List[Dict[str, Any]] = []
+        self._dynamic_executors: Dict[str, Any] = {}
     
     def update_cwd(self, new_cwd: Path) -> None:
         """Actualiza el directorio de trabajo actual."""
@@ -111,6 +113,46 @@ class ToolRegistry:
             if tool:
                 lines.append(f"- {tool.get_signature()}: {tool.description}")
         return "\n".join(lines)
+
+    def get_ollama_tools(self) -> List[Dict[str, Any]]:
+        """Retorna todas las herramientas en formato Ollama function calling."""
+        result = []
+        for name in self.AVAILABLE_TOOLS:
+            tool = self.get_tool(name)
+            if tool:
+                result.append(tool.to_ollama_tool())
+        result.extend(self._dynamic_ollama_tools)
+        return result
+
+    def register_dynamic_tool(
+        self,
+        name: str,
+        ollama_tool: Dict[str, Any],
+        executor,
+    ) -> None:
+        """Registra una herramienta dinámica (ej: de MCP) en tiempo de ejecución.
+
+        Args:
+            name: Nombre único de la herramienta.
+            ollama_tool: Definición en formato Ollama function calling.
+            executor: Callable(args: dict) -> str que ejecuta la herramienta.
+        """
+        self._dynamic_ollama_tools.append(ollama_tool)
+        self._dynamic_executors[name] = executor
+
+    def execute_dynamic(self, name: str, args: Dict[str, Any]) -> str:
+        """Ejecuta una herramienta dinámica registrada."""
+        executor = self._dynamic_executors.get(name)
+        if not executor:
+            return f"Herramienta dinámica '{name}' no encontrada."
+        try:
+            return executor(args)
+        except Exception as exc:
+            return f"Error ejecutando '{name}': {exc}"
+
+    def is_dynamic_tool(self, name: str) -> bool:
+        """Indica si el nombre corresponde a una herramienta dinámica."""
+        return name in self._dynamic_executors
     
     def is_tool_write_operation(self, tool_call: ToolCall) -> bool:
         """

@@ -42,6 +42,7 @@ const App = {
         this.safeInitModule('Plan', window.Plan);
         this.safeInitModule('Modes', window.Modes);
         this.safeInitModule('Chat', window.Chat);
+        this.safeInitModule('MCP', window.MCP);
         Utils.log('APP', 'Module initialization finished');
 
         // Connect to WebSocket

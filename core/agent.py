@@ -97,7 +97,31 @@ class Agent:
         self._memory_context: str = ""
         # Optional MemoryStore for auto-extraction
         self._memory_store: Optional[Any] = None
+
+        # Registrar herramientas MCP en el registry para el modo JSON-ReAct
+        self._register_mcp_tools()
     
+    def _register_mcp_tools(self) -> None:
+        """Registra herramientas MCP en el ToolRegistry para el modo JSON-ReAct."""
+        try:
+            from tools.mcp_manager import MCPManager
+            mcp = MCPManager.get_instance()
+            for tool_def in mcp.get_all_tools():
+                ollama_fmt = tool_def.to_ollama_tool()
+
+                def make_executor(full_name: str):
+                    def executor(args: dict) -> str:
+                        return MCPManager.get_instance().execute_tool_sync(full_name, args)
+                    return executor
+
+                self.tool_registry.register_dynamic_tool(
+                    name=tool_def.full_name,
+                    ollama_tool=ollama_fmt,
+                    executor=make_executor(tool_def.full_name),
+                )
+        except Exception:
+            pass  # MCP no disponible o sin herramientas registradas
+
     def set_mode(self, mode: str) -> None:
         """Cambia el modo de operación."""
         self.mode = mode
@@ -503,14 +527,25 @@ class Agent:
 
         # Agregar contexto del workspace
         self._add_workspace_context(conversation)
-        
+
         # Agregar mensaje del usuario
         conversation.add_user_message(
             content=user_input,
             attachments=attachments or [],
             images=images or [],
         )
-        
+
+        # Usar function calling nativo cuando el modelo lo soporte
+        from config import FUNCTION_CALLING_ENABLED
+        if FUNCTION_CALLING_ENABLED and self.client.model_supports_tools(self.model):
+            self.state.add_trace("Modo: function calling nativo")
+            return self._run_with_native_tools(
+                user_input=user_input,
+                conversation=conversation,
+                step_callback=step_callback,
+                cancel_check=cancel_check,
+            )
+
         tool_results: List[ToolResult] = []
         
         for step in range(1, MAX_AGENT_STEPS + 1):
@@ -648,6 +683,165 @@ class Agent:
             new_cwd=str(self.current_cwd),
         )
     
+    # ------------------------------------------------------------------
+    # Native function calling (Ollama tools API)
+    # ------------------------------------------------------------------
+
+    def _run_with_native_tools(
+        self,
+        user_input: str,
+        conversation: Conversation,
+        step_callback: Optional[Callable[[str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> AgentResponse:
+        """Ciclo de ejecución usando el API nativo de function calling de Ollama.
+
+        Requiere que el modelo haya declarado soporte para 'tools' en sus
+        capabilities. A diferencia del modo JSON-ReAct, los resultados de
+        herramientas se envían como mensajes role='tool', lo que produce un
+        diálogo más natural y confiable en modelos compatibles.
+        """
+        from config import FUNCTION_CALLING_ENABLED
+        from tools.mcp_manager import MCPManager
+
+        tool_results: List[ToolResult] = []
+
+        # Construir lista de herramientas en formato Ollama
+        ollama_tools = self.tool_registry.get_ollama_tools()
+
+        # Agregar herramientas MCP si están disponibles
+        mcp = MCPManager.get_instance()
+        if mcp.has_tools:
+            ollama_tools.extend(mcp.get_ollama_tools())
+
+        # Lista de mensajes para enviar a la API (incluye mensajes tipo 'tool')
+        messages = self._build_messages(conversation)
+        # Agregar el mensaje del usuario directamente (ya fue añadido a conversation)
+        # _build_messages ya lo incluye desde conversation.messages
+
+        for step in range(1, MAX_AGENT_STEPS + 1):
+            self.state.step_count = step
+
+            if cancel_check and cancel_check():
+                self.state.is_running = False
+                return AgentResponse(
+                    content="Ejecución cancelada por el usuario.",
+                    status="cancelled",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                )
+
+            trace_msg = f"Paso {step}: consultando al modelo (function calling nativo)"
+            self.state.add_trace(trace_msg)
+            if step_callback:
+                step_callback(trace_msg)
+
+            try:
+                response = self.client.chat_with_tools(
+                    model=self.model,
+                    messages=messages,
+                    tools=ollama_tools,
+                    options={"temperature": self.temperature},
+                )
+            except Exception as exc:
+                self.state.is_running = False
+                return AgentResponse(
+                    content="",
+                    status="error",
+                    error=str(exc),
+                    trace=self.state.trace,
+                )
+
+            tool_calls_raw = response.get("tool_calls", [])
+            content = response.get("content", "").strip()
+
+            # Sin tool calls → respuesta final
+            if not tool_calls_raw:
+                if not content:
+                    content = "No se generó respuesta."
+                content = self._reflect_on_response(content, conversation)
+                conversation.add_assistant_message(content)
+                self.state.is_running = False
+                self._maybe_extract_memories(user_input, content)
+                return AgentResponse(
+                    content=content,
+                    status="completed",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                )
+
+            # Agregar respuesta del asistente al historial de mensajes API
+            messages.append({
+                "role": "assistant",
+                "content": content,
+                "tool_calls": tool_calls_raw,
+            })
+
+            # Ejecutar cada tool call
+            for tc_raw in tool_calls_raw:
+                fn = tc_raw.get("function", {})
+                tool_name = fn.get("name", "")
+                tool_args = fn.get("arguments", {})
+                if isinstance(tool_args, str):
+                    import json as _j
+                    try:
+                        tool_args = _j.loads(tool_args)
+                    except Exception:
+                        tool_args = {}
+
+                exec_trace = f"Paso {step}: ejecutando {tool_name}"
+                self.state.add_trace(exec_trace)
+                if step_callback:
+                    step_callback(exec_trace)
+
+                # Verificar aprobación
+                tc_model = ToolCall(tool=tool_name, args=tool_args)
+                is_write = self.tool_registry.is_tool_write_operation(tc_model)
+                if self.approval_manager.requires_approval(tc_model, is_write):
+                    self.state.pending_approval = tc_model
+                    self.approval_manager.request_approval(tc_model)
+                    self.state.is_running = False
+                    return AgentResponse(
+                        content=f"Se requiere aprobación para: `{tc_model}`",
+                        status="awaiting_approval",
+                        trace=self.state.trace,
+                        tool_results=tool_results,
+                        new_cwd=str(self.current_cwd),
+                    )
+
+                # Ejecutar: primero herramienta local, luego MCP
+                if self.tool_registry.is_dynamic_tool(tool_name):
+                    tool_output = self.tool_registry.execute_dynamic(tool_name, tool_args)
+                    tool_success = True
+                elif mcp.has_tools and any(t.full_name == tool_name for t in mcp.get_all_tools()):
+                    tool_output = mcp.execute_tool_sync(tool_name, tool_args)
+                    tool_success = not tool_output.startswith("Error")
+                else:
+                    result = self.tool_registry.execute(tc_model)
+                    tool_output = result.output if result.success else f"Error: {result.error}"
+                    tool_success = result.success
+                    tool_results.append(result)
+                    if result.new_cwd:
+                        self.set_cwd(Path(result.new_cwd))
+
+                messages.append({
+                    "role": "tool",
+                    "content": tool_output,
+                })
+
+        # Límite de pasos alcanzado
+        self.state.add_trace(f"Límite de {MAX_AGENT_STEPS} pasos alcanzado")
+        self.state.is_running = False
+        return AgentResponse(
+            content=f"Se alcanzó el límite de {MAX_AGENT_STEPS} pasos.",
+            status="max_steps",
+            trace=self.state.trace,
+            tool_results=tool_results,
+            new_cwd=str(self.current_cwd),
+        )
+
     def resume_after_approval(
         self,
         conversation: Conversation,

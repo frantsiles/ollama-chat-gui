@@ -191,6 +191,56 @@ class OllamaClient:
         
         return data.get("response", "")
     
+    def chat_with_tools(
+        self,
+        model: str,
+        messages: List[Dict[str, Any]],
+        tools: List[Dict[str, Any]],
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Ejecuta un chat usando el API nativo de function calling de Ollama.
+
+        Returns:
+            Dict con 'content' (str) y 'tool_calls' (list).
+            tool_calls es una lista de dicts con campo 'function': {'name', 'arguments'}.
+        """
+        if not model:
+            raise OllamaClientError("Debes seleccionar o indicar un modelo.")
+
+        payload: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "stream": False,
+        }
+        if options:
+            payload["options"] = options
+
+        url = f"{self.base_url}/api/chat"
+        try:
+            response = requests.post(url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise OllamaClientError("Error durante el chat con herramientas en Ollama.") from exc
+
+        data = response.json()
+        if "error" in data:
+            raise OllamaClientError(str(data["error"]))
+
+        message = data.get("message", {})
+        return {
+            "content": message.get("content", ""),
+            "tool_calls": message.get("tool_calls", []),
+        }
+
+    def model_supports_tools(self, model: str) -> bool:
+        """Verifica si el modelo soporta function calling nativo."""
+        try:
+            caps = self.get_model_capabilities(model)
+            return "tools" in caps
+        except OllamaClientError:
+            return False
+
     def is_available(self) -> bool:
         """Verifica si Ollama está disponible."""
         try:

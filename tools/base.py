@@ -106,6 +106,28 @@ class BaseTool(ABC):
                 for p in self.get_parameters()
             ],
         }
+
+    def to_ollama_tool(self) -> Dict[str, Any]:
+        """Convierte la herramienta al formato de Ollama function calling."""
+        params = self.get_parameters()
+        properties: Dict[str, Any] = {}
+        required: List[str] = []
+        for p in params:
+            properties[p.name] = {"type": p.type, "description": p.description}
+            if p.required:
+                required.append(p.name)
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required,
+                },
+            },
+        }
     
     def get_signature(self) -> str:
         """Retorna la firma de la herramienta para el prompt."""

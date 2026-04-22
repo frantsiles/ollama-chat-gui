@@ -13,3 +13,6 @@ streamlit>=1.44.0
 # Semantic RAG
 chromadb>=0.6.0
 beautifulsoup4>=4.12.0
+
+# MCP (Model Context Protocol) - herramientas externas
+mcp>=1.0.0

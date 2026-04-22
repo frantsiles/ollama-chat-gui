@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from web.api import router as api_router
+from web.api_mcp import router as mcp_router
 from web.websocket import websocket_handler
 
 # =============================================================================
@@ -38,6 +39,7 @@ app.add_middleware(
 
 # API REST
 app.include_router(api_router)
+app.include_router(mcp_router)
 
 
 # WebSocket
@@ -71,13 +73,27 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     """Evento de inicio."""
-
-    from config import PERSISTENCE_DB_PATH
+    from config import MCP_ENABLED, MCP_SERVERS_FILE, PERSISTENCE_DB_PATH
     from web.state import SessionManager
+    from tools.mcp_manager import MCPManager
+
     SessionManager.init_persistence(PERSISTENCE_DB_PATH)
-    print("🚀 Ollama Chat GUI started")
-    print(f"📁 Static files: {STATIC_DIR}")
-    print(f"💾 Persistence DB: {PERSISTENCE_DB_PATH}")
+    print("Ollama Chat GUI started")
+    print(f"Static files: {STATIC_DIR}")
+    print(f"Persistence DB: {PERSISTENCE_DB_PATH}")
+
+    # Inicializar MCPManager (siempre, para que la API /api/mcp funcione)
+    MCPManager.init(config_file=MCP_SERVERS_FILE)
+    if MCP_ENABLED:
+        summary = await MCPManager.get_instance().connect_all_enabled()
+        for server_name, result in summary.items():
+            status = result.get("status", "?")
+            if status == "ok":
+                print(f"[MCP] {server_name}: {result.get('tools', 0)} herramientas")
+            elif status == "error":
+                print(f"[MCP] {server_name}: error - {result.get('error', '')}")
+    else:
+        print("[MCP] Desactivado (MCP_ENABLED=false)")
 
 
 @app.on_event("shutdown")

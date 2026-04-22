@@ -209,3 +209,19 @@ WRITE_GIT_SUBCOMMANDS = {
     "clean", "commit", "merge", "push", "rebase", "reset",
     "revert", "rm", "stash", "switch", "tag",
 }
+
+# =============================================================================
+# Native Function Calling
+# =============================================================================
+# Use Ollama's native tool-calling API when the model supports it
+FUNCTION_CALLING_ENABLED: bool = os.getenv("FUNCTION_CALLING_ENABLED", "true").lower() != "false"
+
+# =============================================================================
+# MCP (Model Context Protocol)
+# =============================================================================
+MCP_ENABLED: bool = os.getenv("MCP_ENABLED", "false").lower() == "true"
+# Path to JSON file that lists MCP server configurations
+MCP_SERVERS_FILE: str = os.getenv(
+    "MCP_SERVERS_FILE",
+    str(_Path(os.getcwd()) / "mcp_servers.json"),
+)
