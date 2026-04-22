@@ -78,11 +78,17 @@ class OllamaClient:
         model: str,
         messages: List[Dict[str, Any]],
         options: Optional[Dict[str, Any]] = None,
+        fmt: Optional[str] = None,
     ) -> str:
-        """Ejecuta un chat completo (sin streaming)."""
+        """Ejecuta un chat completo (sin streaming).
+
+        Args:
+            fmt: Si es "json", fuerza al modelo a producir JSON válido (útil para
+                 modelos que ignoran instrucciones de formato como Gemma).
+        """
         if not model:
             raise OllamaClientError("Debes seleccionar o indicar un modelo.")
-        
+
         payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -90,7 +96,9 @@ class OllamaClient:
         }
         if options:
             payload["options"] = options
-        
+        if fmt:
+            payload["format"] = fmt
+
         url = f"{self.base_url}/api/chat"
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
@@ -109,11 +117,12 @@ class OllamaClient:
         model: str,
         messages: List[Dict[str, Any]],
         options: Optional[Dict[str, Any]] = None,
+        fmt: Optional[str] = None,
     ) -> Iterable[str]:
         """Ejecuta un chat con streaming de respuesta."""
         if not model:
             raise OllamaClientError("Debes seleccionar o indicar un modelo.")
-        
+
         payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
@@ -121,6 +130,8 @@ class OllamaClient:
         }
         if options:
             payload["options"] = options
+        if fmt:
+            payload["format"] = fmt
         
         url = f"{self.base_url}/api/chat"
         try:

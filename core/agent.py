@@ -112,14 +112,21 @@ class Agent:
         self,
         messages: List[Dict[str, Any]],
         stream: bool = False,
+        fmt: Optional[str] = None,
     ) -> str:
-        """Llama al modelo y retorna la respuesta."""
+        """Llama al modelo y retorna la respuesta.
+
+        Args:
+            fmt: "json" para forzar JSON válido (recomendado en modo Agent/Plan
+                 para que modelos como Gemma sigan el formato de tool calls).
+        """
         if stream:
             chunks = []
             for chunk in self.client.chat_stream(
                 model=self.model,
                 messages=messages,
                 options={"temperature": self.temperature},
+                fmt=fmt,
             ):
                 chunks.append(chunk)
             return "".join(chunks)
@@ -128,6 +135,7 @@ class Agent:
                 model=self.model,
                 messages=messages,
                 options={"temperature": self.temperature},
+                fmt=fmt,
             )
     
     def _apply_context_window(
@@ -228,7 +236,7 @@ class Agent:
         ]
         
         try:
-            repaired = self._call_model(repair_messages)
+            repaired = self._call_model(repair_messages, fmt="json")
         except OllamaClientError:
             return None
         
@@ -276,6 +284,7 @@ class Agent:
                 model=self.model,
                 messages=messages,
                 options={"temperature": REFLECTION_TEMPERATURE},
+                fmt="json",
             ).strip()
             if raw.startswith("```"):
                 lines = raw.splitlines()
@@ -350,7 +359,7 @@ class Agent:
         })
 
         try:
-            raw = self._call_model(messages).strip()
+            raw = self._call_model(messages, fmt="json").strip()
             if raw.startswith("```"):
                 lines = raw.splitlines()
                 raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
@@ -392,6 +401,7 @@ class Agent:
                 model=self.model,
                 messages=messages,
                 options={"temperature": 0.2},
+                fmt="json",
             )
 
         try:
@@ -524,11 +534,12 @@ class Agent:
             if step_callback:
                 step_callback(trace_consulta)
             
-            # Llamar al modelo
+            # Llamar al modelo forzando JSON válido (ayuda a modelos como Gemma
+            # que tienden a ignorar instrucciones de formato estricto)
             messages = self._build_messages(conversation)
-            
+
             try:
-                response = self._call_model(messages)
+                response = self._call_model(messages, fmt="json")
             except OllamaClientError as e:
                 self.state.is_running = False
                 return AgentResponse(
@@ -538,31 +549,41 @@ class Agent:
                     trace=self.state.trace,
                     tool_results=tool_results,
                 )
-            
+
             if not response.strip():
                 self.state.add_trace(f"Paso {step}: respuesta vacía, reintentando")
                 continue
-            
-            # Intentar extraer tool call
+
+            # Intentar extraer tool call (incluyendo la virtual "final_answer")
             tool_call = ToolRegistry.extract_tool_call(response)
-            
+
             if not tool_call and ToolRegistry.looks_like_tool_call(response):
                 self.state.add_trace(f"Paso {step}: intentando reparar tool call malformada")
                 tool_call = self._repair_tool_call(response)
-            
+
+            # final_answer: el modelo señala explícitamente que terminó
+            if tool_call and tool_call.tool == "final_answer":
+                self.state.add_trace(f"Paso {step}: respuesta final via final_answer")
+                final_content = tool_call.args.get("content", "").strip() or response
+                final_content = self._reflect_on_response(final_content, conversation)
+                conversation.add_assistant_message(final_content)
+                self.state.is_running = False
+                self._maybe_extract_memories(user_input, final_content)
+                return AgentResponse(
+                    content=final_content,
+                    status="completed",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                )
+
             if not tool_call:
-                # No hay tool call, es respuesta final
+                # Fallback: el JSON no coincide con ninguna tool conocida
                 self.state.add_trace(f"Paso {step}: respuesta final sin tool")
-
-                # Reflexión crítica antes de entregar
                 response = self._reflect_on_response(response, conversation)
-
                 conversation.add_assistant_message(response)
                 self.state.is_running = False
-
-                # Extraer memorias
                 self._maybe_extract_memories(user_input, response)
-                
                 return AgentResponse(
                     content=response,
                     status="completed",
@@ -778,7 +799,7 @@ class Agent:
             ),
         })
         try:
-            raw = self._call_model(messages).strip()
+            raw = self._call_model(messages, fmt="json").strip()
             # Quitar bloque de código markdown si el modelo lo envuelve
             if raw.startswith("```"):
                 lines = raw.splitlines()

@@ -4,7 +4,7 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${PROJECT_DIR}/.venv"
-PORT="${PORT:-8000}"
+PORT="${PORT:-9901}"
 
 if [[ ! -d "${VENV_DIR}" ]]; then
   echo "🔧 Creando entorno virtual en .venv..."

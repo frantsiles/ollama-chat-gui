@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Optional, Set, Type
 
 from core.models import ToolCall, ToolResult as ModelToolResult
 from tools.base import BaseTool, ToolError, ToolResult
@@ -30,11 +30,15 @@ TOOL_JSON_PATTERN = re.compile(
 class ToolRegistry:
     """
     Registro central de herramientas.
-    
+
     Maneja el registro, validación y ejecución de todas las herramientas
     disponibles para el agente.
     """
-    
+
+    # Herramientas virtuales: aceptadas por extract_tool_call pero no ejecutadas
+    # por el registry (el agente las intercepta antes).
+    VIRTUAL_TOOLS: Set[str] = {"final_answer"}
+
     # Herramientas disponibles (clase -> nombre)
     AVAILABLE_TOOLS: Dict[str, Type[BaseTool]] = {
         "read_file": ReadFileTool,
@@ -219,7 +223,10 @@ class ToolRegistry:
             if not isinstance(tool_name, str):
                 continue
             
-            if tool_name not in ToolRegistry.AVAILABLE_TOOLS:
+            if (
+                tool_name not in ToolRegistry.AVAILABLE_TOOLS
+                and tool_name not in ToolRegistry.VIRTUAL_TOOLS
+            ):
                 continue
             
             if not isinstance(args, dict):

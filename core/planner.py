@@ -78,11 +78,12 @@ class PlanManager:
         )
     
     def _call_model(self, messages: List[Dict[str, Any]]) -> str:
-        """Llama al modelo."""
+        """Llama al modelo forzando JSON (el plan siempre es un objeto JSON)."""
         return self.client.chat(
             model=self.model,
             messages=messages,
             options={"temperature": self.temperature},
+            fmt="json",
         )
     
     @staticmethod
