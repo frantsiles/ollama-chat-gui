@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
@@ -70,6 +71,7 @@ async def root():
 @app.on_event("startup")
 async def startup_event():
     """Evento de inicio."""
+
     from config import PERSISTENCE_DB_PATH
     from web.state import SessionManager
     SessionManager.init_persistence(PERSISTENCE_DB_PATH)
@@ -82,3 +84,12 @@ async def startup_event():
 async def shutdown_event():
     """Evento de cierre."""
     print("👋 Ollama Chat GUI shutting down")
+
+# =============================================================================
+# Server Startup Logic
+# =============================================================================
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=int(os.environ.get("PORT", 8000)), reload=True, workers=1)
+
