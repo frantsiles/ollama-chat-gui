@@ -16,6 +16,7 @@
     <link rel="stylesheet" href="/static/css/sidebar.css">
     <link rel="stylesheet" href="/static/css/chat.css">
     <link rel="stylesheet" href="/static/css/mcp.css">
+    <link rel="stylesheet" href="/static/css/explorer.css">
 </head>
 <body>
     <div id="app">
@@ -76,64 +77,144 @@
 
         <!-- Main Container -->
         <div class="main-container">
-            <!-- Sidebar -->
-            <aside class="sidebar" id="sidebar">
-                <div class="sidebar-content">
-                    <!-- Model Selection -->
-                    <section class="sidebar-section">
-                        <h3 class="sidebar-title">Modelo</h3>
-                        <select id="model-select" class="select">
-                            <option value="">Cargando modelos...</option>
-                        </select>
-                    </section>
 
-                    <!-- Temperature -->
-                    <section class="sidebar-section">
-                        <h3 class="sidebar-title">
-                            Temperatura
-                            <span id="temp-value" class="badge">0.7</span>
-                        </h3>
-                        <input type="range" id="temperature" class="slider" 
-                               min="0" max="2" step="0.1" value="0.7">
-                    </section>
+            <!-- Activity Bar (VS Code style) -->
+            <div class="activity-bar" id="activity-bar">
+                <button class="activity-btn" data-panel="explorer" title="Explorador de archivos">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                    </svg>
+                </button>
+                <button class="activity-btn" data-panel="config" title="Configuración">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+                    </svg>
+                </button>
+                <button class="activity-btn" data-panel="trace" title="Trace del agente">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="8" y1="6" x2="21" y2="6"/>
+                        <line x1="8" y1="12" x2="21" y2="12"/>
+                        <line x1="8" y1="18" x2="21" y2="18"/>
+                        <line x1="3" y1="6" x2="3.01" y2="6"/>
+                        <line x1="3" y1="12" x2="3.01" y2="12"/>
+                        <line x1="3" y1="18" x2="3.01" y2="18"/>
+                    </svg>
+                </button>
+            </div>
 
-                    <!-- Workspace -->
-                    <section class="sidebar-section">
-                        <h3 class="sidebar-title">Workspace</h3>
-                        <div class="workspace-path" id="workspace-path">
-                            ~/
-                        </div>
-                        <button id="change-workspace" class="btn btn-secondary btn-sm">
-                            Cambiar
-                        </button>
-                    </section>
+            <!-- Side Panel -->
+            <aside class="side-panel collapsed" id="side-panel">
+                <!-- Resize handle -->
+                <div class="panel-resize-handle" id="panel-resize"></div>
 
-                    <!-- Approval Level -->
-                    <section class="sidebar-section">
-                        <h3 class="sidebar-title">Nivel de Aprobación</h3>
-                        <select id="approval-level" class="select">
-                            <option value="none">Ninguno</option>
-                            <option value="write_only" selected>Solo escritura</option>
-                            <option value="all">Todas las acciones</option>
-                        </select>
-                    </section>
+                <!-- ── EXPLORER Panel ── -->
+                <div class="panel" data-panel="explorer" id="panel-explorer">
+                    <div class="panel-title">Explorador</div>
 
-                    <!-- Agent Trace -->
-                    <section class="sidebar-section" id="trace-section" style="display: none;">
-                        <h3 class="sidebar-title">
-                            Trace del Agente
-                            <button id="toggle-trace" class="icon-btn-sm">
+                    <!-- Workspace bar -->
+                    <div class="explorer-workspace-bar">
+                        <span class="explorer-workspace-path" id="explorer-workspace-path">~/</span>
+                        <div class="explorer-workspace-actions">
+                            <button class="explorer-action-btn" id="explorer-nav-home" title="Ir al home">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="6 9 12 15 18 9"/>
+                                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                                    <polyline points="9 22 9 12 15 12 15 22"/>
                                 </svg>
                             </button>
-                        </h3>
-                        <div class="trace-list" id="trace-list"></div>
-                    </section>
+                            <button class="explorer-action-btn" id="explorer-refresh" title="Recargar">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="23 4 23 10 17 10"/>
+                                    <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- File Tree -->
+                    <div class="file-tree" id="file-tree">
+                        <div class="file-tree-loading">Selecciona un workspace para explorar</div>
+                    </div>
                 </div>
 
-                <!-- Sidebar Footer -->
-                <div class="sidebar-footer">
+                <!-- ── CONFIG Panel ── -->
+                <div class="panel" data-panel="config" id="panel-config">
+                    <div class="panel-title">Configuración</div>
+                    <div class="panel-body">
+
+                        <!-- Model -->
+                        <div class="panel-section">
+                            <div class="panel-section-header" data-target="cfg-model">
+                                <span>Modelo</span>
+                                <svg class="panel-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                            <div class="panel-section-body" id="cfg-model">
+                                <select id="model-select" class="select">
+                                    <option value="">Cargando modelos...</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Temperature -->
+                        <div class="panel-section">
+                            <div class="panel-section-header" data-target="cfg-temp">
+                                <span>Temperatura <span id="temp-value" class="badge" style="margin-left:6px">0.7</span></span>
+                                <svg class="panel-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                            <div class="panel-section-body" id="cfg-temp">
+                                <input type="range" id="temperature" class="slider"
+                                       min="0" max="2" step="0.1" value="0.7">
+                            </div>
+                        </div>
+
+                        <!-- Workspace -->
+                        <div class="panel-section">
+                            <div class="panel-section-header" data-target="cfg-workspace">
+                                <span>Workspace</span>
+                                <svg class="panel-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                            <div class="panel-section-body" id="cfg-workspace">
+                                <div class="workspace-path" id="workspace-path">~/</div>
+                                <button id="change-workspace" class="btn btn-secondary btn-sm">Cambiar</button>
+                            </div>
+                        </div>
+
+                        <!-- Approval Level -->
+                        <div class="panel-section">
+                            <div class="panel-section-header" data-target="cfg-approval">
+                                <span>Aprobación</span>
+                                <svg class="panel-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                            <div class="panel-section-body" id="cfg-approval">
+                                <select id="approval-level" class="select">
+                                    <option value="none">Ninguno</option>
+                                    <option value="write_only" selected>Solo escritura</option>
+                                    <option value="all">Todas las acciones</option>
+                                </select>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+
+                <!-- ── TRACE Panel ── -->
+                <div class="panel" data-panel="trace" id="panel-trace">
+                    <div class="panel-title">Trace del Agente</div>
+                    <div class="panel-body">
+                        <div class="trace-list" id="trace-list"></div>
+                    </div>
+                </div>
+
+                <!-- Footer: connection status -->
+                <div class="side-panel-footer">
                     <div class="connection-status" id="connection-status">
                         <span class="status-dot disconnected"></span>
                         <span class="status-text">Desconectado</span>
@@ -267,6 +348,7 @@
     <script src="/static/js/modes.js"></script>
     <script src="/static/js/plan.js"></script>
     <script src="/static/js/mcp.js"></script>
+    <script src="/static/js/explorer.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

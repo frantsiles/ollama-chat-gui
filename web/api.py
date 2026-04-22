@@ -222,6 +222,55 @@ async def get_current_plan(session_id: str) -> Dict[str, Any]:
 
 
 # =============================================================================
+# File Explorer
+# =============================================================================
+
+@router.get("/files")
+async def list_files(path: str = "") -> Dict[str, Any]:
+    """Lista el contenido de un directorio para el explorador de archivos."""
+    import os
+
+    if not path:
+        path = str(Path.home())
+
+    try:
+        target = Path(path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Ruta no encontrada")
+    if not target.is_dir():
+        raise HTTPException(status_code=400, detail="La ruta no es un directorio")
+
+    items = []
+    try:
+        for entry in sorted(target.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+                stat = entry.stat(follow_symlinks=False)
+                items.append({
+                    "name": entry.name,
+                    "path": str(entry),
+                    "type": "dir" if is_dir else "file",
+                    "size": stat.st_size if not is_dir else None,
+                    "hidden": entry.name.startswith("."),
+                })
+            except PermissionError:
+                pass
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+
+    parent = str(target.parent) if target != target.parent else None
+
+    return {
+        "path": str(target),
+        "parent": parent,
+        "items": items,
+    }
+
+
+# =============================================================================
 # Health Check
 # =============================================================================
 

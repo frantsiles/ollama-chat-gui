@@ -1,202 +1,193 @@
 
 /**
- * Sidebar module - configuration and controls
+ * Sidebar/Config module — handles model, temperature, workspace, approval.
+ * The panel itself is now controlled by Explorer's activity bar.
  */
 
 const Sidebar = {
-    sidebarEl: null,
-    toggleBtn: null,
     modelSelect: null,
     temperatureSlider: null,
     tempValue: null,
     workspacePath: null,
     approvalLevel: null,
-    traceSection: null,
     traceList: null,
 
-    /**
-     * Initialize sidebar module
-     */
     init() {
-        this.sidebarEl = document.getElementById('sidebar');
-        this.toggleBtn = document.getElementById('sidebar-toggle');
-        this.modelSelect = document.getElementById('model-select');
+        this.modelSelect     = document.getElementById('model-select');
         this.temperatureSlider = document.getElementById('temperature');
-        this.tempValue = document.getElementById('temp-value');
-        this.workspacePath = document.getElementById('workspace-path');
-        this.approvalLevel = document.getElementById('approval-level');
-        this.traceSection = document.getElementById('trace-section');
-        this.traceList = document.getElementById('trace-list');
+        this.tempValue       = document.getElementById('temp-value');
+        this.workspacePath   = document.getElementById('workspace-path');
+        this.approvalLevel   = document.getElementById('approval-level');
+        this.traceList       = document.getElementById('trace-list');
 
         this.bindEvents();
         this.loadSettings();
         this.loadModels();
+
+        // Init collapsible config sections
+        if (window.Explorer) Explorer.initPanelSections();
     },
 
-    /**
-     * Called after WebSocket connection is established
-     */
     onConnected() {
-        // Actualizar config del servidor con el modelo actual
         if (this.modelSelect.value) {
             this.updateConfig({ model: this.modelSelect.value });
         }
+        // Load file tree once we have a session workspace
+        this._syncWorkspaceToExplorer();
     },
 
-    /**
-     * Bind DOM events
-     */
-    bindEvents() {
-        // Toggle sidebar
-        this.toggleBtn.addEventListener('click', () => {
-            this.toggle();
-        });
+    _syncWorkspaceToExplorer() {
+        if (!wsManager?.sessionId) return;
+        fetch(`/api/sessions/${wsManager.sessionId}/config`)
+            .then(r => r.json())
+            .then(data => {
+                const ws = data.workspace_root || '';
+                if (ws && window.Explorer) {
+                    Explorer.setWorkspace(ws);
+                }
+                if (ws && this.workspacePath) {
+                    this.workspacePath.textContent = Utils.truncatePath(ws, 40);
+                }
+            })
+            .catch(() => {});
+    },
 
-        // Model selection
+    bindEvents() {
+        // Model
         this.modelSelect.addEventListener('change', (e) => {
             this.updateConfig({ model: e.target.value });
             this.updateModelIndicator(e.target.value);
         });
 
-        // Temperature slider
+        // Temperature
         this.temperatureSlider.addEventListener('input', (e) => {
-            const temp = parseFloat(e.target.value);
-            this.tempValue.textContent = temp.toFixed(1);
+            this.tempValue.textContent = parseFloat(e.target.value).toFixed(1);
         });
-
         this.temperatureSlider.addEventListener('change', (e) => {
             this.updateConfig({ temperature: parseFloat(e.target.value) });
         });
 
-        // Approval level
+        // Approval
         this.approvalLevel.addEventListener('change', (e) => {
             this.updateConfig({ approval_level: e.target.value });
         });
 
-        // Change workspace button
+        // Change workspace button (manual path input)
         document.getElementById('change-workspace').addEventListener('click', () => {
-            const path = prompt('Ingresa la ruta del workspace:', this.workspacePath.textContent);
+            const path = prompt('Ruta del workspace:', this.workspacePath.textContent);
             if (path) {
                 this.updateConfig({ workspace_root: path });
                 this.workspacePath.textContent = Utils.truncatePath(path, 40);
+                if (window.Explorer) Explorer.setWorkspace(path);
             }
         });
 
-        // Close sidebar on mobile when clicking outside
-        document.addEventListener('click', (e) => {
-            if (window.innerWidth <= 768 && 
-                this.sidebarEl.classList.contains('open') &&
-                !this.sidebarEl.contains(e.target) &&
-                !this.toggleBtn.contains(e.target)) {
-                this.close();
-            }
-        });
+        // Explorer toolbar buttons
+        const homeBtn = document.getElementById('explorer-nav-home');
+        if (homeBtn) {
+            homeBtn.addEventListener('click', () => {
+                fetch('/api/files').then(r => r.json()).then(data => {
+                    // Navigate home
+                    const tree = document.getElementById('file-tree');
+                    if (tree && window.Explorer) Explorer.navigateTo(data.path);
+                }).catch(() => {});
+            });
+        }
+
+        const refreshBtn = document.getElementById('explorer-refresh');
+        if (refreshBtn) {
+            refreshBtn.addEventListener('click', () => {
+                if (window.Explorer && Explorer.currentPath) {
+                    const tree = document.getElementById('file-tree');
+                    tree.innerHTML = '';
+                    Explorer._loadTree(Explorer.currentPath, tree, 0);
+                }
+            });
+        }
     },
 
-    /**
-     * Load available models
-     */
     async loadModels() {
         Utils.log('SIDEBAR', 'Loading models...');
         try {
             const response = await fetch('/api/models');
-            Utils.log('SIDEBAR', 'Models API response:', response.status);
             const data = await response.json();
-            Utils.log('SIDEBAR', 'Models data:', data);
-            
+
             this.modelSelect.innerHTML = '';
-            
+
             if (data.models && data.models.length > 0) {
                 data.models.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model.name;
                     option.textContent = model.name;
+
+                    // Show capabilities hint
+                    if (model.capabilities && model.capabilities.includes('tools')) {
+                        option.textContent += ' ⚡';
+                        option.title = 'Soporta function calling nativo';
+                    }
                     this.modelSelect.appendChild(option);
                 });
 
-                // Select first model if none selected
                 const savedModel = Utils.storage.get('selectedModel');
                 if (savedModel && data.models.find(m => m.name === savedModel)) {
                     this.modelSelect.value = savedModel;
                 } else {
                     this.modelSelect.value = data.models[0].name;
                 }
-                
+
                 this.updateModelIndicator(this.modelSelect.value);
                 Utils.storage.set('selectedModel', this.modelSelect.value);
                 App.state.model = this.modelSelect.value;
-                Utils.log('SIDEBAR', 'Model selected:', this.modelSelect.value);
 
-                // Si ya hay sesión WS, sincronizar modelo al backend inmediatamente
                 if (wsManager && wsManager.sessionId) {
                     this.updateConfig({ model: this.modelSelect.value });
                 }
             } else {
                 this.modelSelect.innerHTML = '<option value="">No hay modelos</option>';
-                Utils.log('SIDEBAR', 'No models available');
             }
         } catch (error) {
-            Utils.log('SIDEBAR', '❌ Error loading models:', error);
+            Utils.log('SIDEBAR', 'Error loading models:', error);
             this.modelSelect.innerHTML = '<option value="">Error al cargar</option>';
             Utils.showToast('Error al cargar modelos. ¿Está Ollama corriendo?', 'error');
         }
     },
 
-    /**
-     * Load saved settings
-     */
     loadSettings() {
         const settings = Utils.storage.get('settings', {});
-        
+
         if (settings.temperature !== undefined) {
             this.temperatureSlider.value = settings.temperature;
-            this.tempValue.textContent = settings.temperature.toFixed(1);
+            this.tempValue.textContent = Number(settings.temperature).toFixed(1);
         }
-
         if (settings.approvalLevel) {
             this.approvalLevel.value = settings.approvalLevel;
         }
-
         if (settings.workspacePath) {
             this.workspacePath.textContent = Utils.truncatePath(settings.workspacePath, 40);
         }
     },
 
-    /**
-     * Save settings locally
-     */
-    saveSettings(settings) {
-        const current = Utils.storage.get('settings', {});
-        Utils.storage.set('settings', { ...current, ...settings });
-    },
-
-    /**
-     * Update configuration on server
-     */
     async updateConfig(config) {
         if (!wsManager.sessionId) return;
-
         try {
             const response = await fetch(`/api/sessions/${wsManager.sessionId}/config`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(config)
             });
-
             if (response.ok) {
-                // Save locally too
                 if (config.model) {
                     Utils.storage.set('selectedModel', config.model);
                     App.state.model = config.model;
                 }
                 if (config.temperature !== undefined) {
-                    this.saveSettings({ temperature: config.temperature });
+                    this._saveSettings({ temperature: config.temperature });
                 }
                 if (config.approval_level) {
-                    this.saveSettings({ approvalLevel: config.approval_level });
+                    this._saveSettings({ approvalLevel: config.approval_level });
                 }
                 if (config.workspace_root) {
-                    this.saveSettings({ workspacePath: config.workspace_root });
+                    this._saveSettings({ workspacePath: config.workspace_root });
                 }
             }
         } catch (error) {
@@ -204,90 +195,50 @@ const Sidebar = {
         }
     },
 
-    /**
-     * Update model indicator in footer
-     */
-    updateModelIndicator(model) {
-        const indicator = document.getElementById('model-indicator');
-        if (indicator) {
-            indicator.innerHTML = `Modelo: <strong>${model || '-'}</strong>`;
-        }
+    _saveSettings(patch) {
+        const current = Utils.storage.get('settings', {});
+        Utils.storage.set('settings', { ...current, ...patch });
     },
 
-    /**
-     * Update trace display
-     */
+    updateModelIndicator(model) {
+        const el = document.getElementById('model-indicator');
+        if (el) el.innerHTML = `Modelo: <strong>${model || '-'}</strong>`;
+    },
+
+    /** Called from websocket/chat handlers with trace array */
     updateTrace(trace) {
+        if (!this.traceList) return;
         if (!trace || trace.length === 0) {
-            this.traceSection.style.display = 'none';
+            this.traceList.innerHTML = '<div style="padding:8px;color:var(--text-tertiary);font-size:0.75rem">Sin actividad aún</div>';
             return;
         }
 
-        this.traceSection.style.display = 'block';
         this.traceList.innerHTML = '';
-
         trace.forEach(item => {
-            const traceItem = document.createElement('div');
-            traceItem.className = 'trace-item';
-            
-            // Add status class based on content
-            if (item.includes('completado') || item.includes('OK')) {
-                traceItem.classList.add('success');
-            } else if (item.includes('error') || item.includes('falló')) {
-                traceItem.classList.add('error');
-            } else if (item.includes('esperando') || item.includes('ejecutando')) {
-                traceItem.classList.add('pending');
-            }
-            
-            traceItem.textContent = item;
-            this.traceList.appendChild(traceItem);
+            const el = document.createElement('div');
+            el.className = 'trace-item';
+            if (item.includes('completado') || item.includes('OK') || item.includes('éxito')) el.classList.add('success');
+            else if (item.includes('error') || item.includes('falló')) el.classList.add('error');
+            else if (item.includes('esperando') || item.includes('ejecutando')) el.classList.add('pending');
+            el.textContent = item;
+            this.traceList.appendChild(el);
         });
 
-        // Scroll to latest
         this.traceList.scrollTop = this.traceList.scrollHeight;
+
+        // Auto-switch to trace panel when agent is working
+        if (window.Explorer) Explorer.setPanel('trace');
+        if (window.Explorer) Explorer._expandSidePanel();
     },
 
-    /**
-     * Clear trace
-     */
     clearTrace() {
-        this.traceList.innerHTML = '';
-        this.traceSection.style.display = 'none';
+        if (this.traceList) this.traceList.innerHTML = '';
     },
 
-    /**
-     * Toggle sidebar
-     */
-    toggle() {
-        if (window.innerWidth <= 768) {
-            this.sidebarEl.classList.toggle('open');
-        } else {
-            this.sidebarEl.classList.toggle('collapsed');
-        }
-    },
-
-    /**
-     * Open sidebar
-     */
-    open() {
-        if (window.innerWidth <= 768) {
-            this.sidebarEl.classList.add('open');
-        } else {
-            this.sidebarEl.classList.remove('collapsed');
-        }
-    },
-
-    /**
-     * Close sidebar
-     */
-    close() {
-        if (window.innerWidth <= 768) {
-            this.sidebarEl.classList.remove('open');
-        } else {
-            this.sidebarEl.classList.add('collapsed');
-        }
-    }
+    // Kept for backward-compat calls from app.js
+    toggle() { if (window.Explorer) Explorer._collapseSidePanel(); },
+    open()   { if (window.Explorer) Explorer._expandSidePanel(); },
+    close()  { if (window.Explorer) Explorer._collapseSidePanel(); },
 };
 
-// Make available globally
 window.Sidebar = Sidebar;

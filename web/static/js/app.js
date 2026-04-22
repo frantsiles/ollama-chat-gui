@@ -38,6 +38,7 @@ const App = {
 
         // Initialize all modules (defensive)
         Utils.log('APP', 'Initializing modules...');
+        this.safeInitModule('Explorer', window.Explorer);
         this.safeInitModule('Sidebar', window.Sidebar);
         this.safeInitModule('Plan', window.Plan);
         this.safeInitModule('Modes', window.Modes);

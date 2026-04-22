@@ -1,75 +1,8 @@
 /* =============================================================================
-   Sidebar Styles
+   Sidebar / Side Panel Component Styles
    ============================================================================= */
 
-.sidebar {
-    width: var(--sidebar-width);
-    height: 100%;
-    background: var(--bg-secondary);
-    border-right: 1px solid var(--border-primary);
-    display: flex;
-    flex-direction: column;
-    flex-shrink: 0;
-    transition: width var(--transition-normal), transform var(--transition-normal);
-    overflow: hidden;
-}
-
-.sidebar.collapsed {
-    width: 0;
-    border-right: none;
-}
-
-/* Mobile sidebar */
-@media (max-width: 768px) {
-    .sidebar {
-        position: fixed;
-        top: var(--header-height);
-        left: 0;
-        bottom: 0;
-        z-index: 100;
-        transform: translateX(-100%);
-    }
-    
-    .sidebar.open {
-        transform: translateX(0);
-        box-shadow: var(--shadow-xl);
-    }
-}
-
-/* =============================================================================
-   Sidebar Content
-   ============================================================================= */
-
-.sidebar-content {
-    flex: 1;
-    padding: var(--space-md);
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-lg);
-}
-
-.sidebar-section {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-sm);
-}
-
-.sidebar-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    font-size: var(--text-sm);
-    font-weight: 600;
-    color: var(--text-secondary);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-/* =============================================================================
-   Workspace Path
-   ============================================================================= */
-
+/* Workspace path display inside config panel */
 .workspace-path {
     padding: var(--space-sm) var(--space-md);
     background: var(--bg-tertiary);
@@ -83,13 +16,8 @@
 }
 
 /* =============================================================================
-   Connection Status
+   Connection Status (inside side-panel-footer)
    ============================================================================= */
-
-.sidebar-footer {
-    padding: var(--space-md);
-    border-top: 1px solid var(--border-primary);
-}
 
 .connection-status {
     display: flex;
@@ -126,15 +54,14 @@
 }
 
 /* =============================================================================
-   Trace List
+   Trace List (inside Trace panel)
    ============================================================================= */
 
 .trace-list {
     display: flex;
     flex-direction: column;
     gap: var(--space-xs);
-    max-height: 200px;
-    overflow-y: auto;
+    padding: var(--space-sm);
     font-family: var(--font-mono);
     font-size: var(--text-xs);
 }
@@ -145,43 +72,19 @@
     border-radius: var(--radius-sm);
     color: var(--text-secondary);
     border-left: 2px solid var(--border-primary);
+    line-height: 1.4;
 }
 
 .trace-item.success {
     border-left-color: var(--accent-success);
+    color: var(--accent-success);
 }
 
 .trace-item.error {
     border-left-color: var(--accent-danger);
+    color: var(--accent-danger);
 }
 
 .trace-item.pending {
     border-left-color: var(--accent-warning);
-}
-
-/* =============================================================================
-   Sidebar Overlay (Mobile)
-   ============================================================================= */
-
-.sidebar-overlay {
-    display: none;
-}
-
-@media (max-width: 768px) {
-    .sidebar-overlay {
-        display: block;
-        position: fixed;
-        inset: 0;
-        top: var(--header-height);
-        background: rgba(0, 0, 0, 0.5);
-        z-index: 99;
-        opacity: 0;
-        visibility: hidden;
-        transition: opacity var(--transition-normal), visibility var(--transition-normal);
-    }
-    
-    .sidebar-overlay.active {
-        opacity: 1;
-        visibility: visible;
-    }
 }

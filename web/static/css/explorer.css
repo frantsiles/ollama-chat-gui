@@ -1,0 +1,461 @@
+/* =============================================================================
+   VS Code-style Activity Bar + Side Panel Layout
+   ============================================================================= */
+
+/* Override main-container to include activity bar */
+.main-container {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* =============================================================================
+   Activity Bar (leftmost icon strip, like VS Code)
+   ============================================================================= */
+
+.activity-bar {
+    width: 48px;
+    height: 100%;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-primary);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: var(--space-xs) 0;
+    gap: var(--space-xs);
+    flex-shrink: 0;
+    z-index: 10;
+}
+
+.activity-btn {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: color var(--transition-fast), background var(--transition-fast);
+    position: relative;
+}
+
+.activity-btn:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+.activity-btn.active {
+    color: var(--text-primary);
+    background: var(--bg-active);
+}
+
+/* Active indicator bar on left (VS Code style) */
+.activity-btn.active::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 18px;
+    background: var(--accent-primary);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+/* =============================================================================
+   Side Panel (expandable content area)
+   ============================================================================= */
+
+.side-panel {
+    width: 280px;
+    min-width: 160px;
+    max-width: 600px;
+    height: 100%;
+    background: var(--bg-secondary);
+    border-right: 1px solid var(--border-primary);
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow: hidden;
+    position: relative;
+    transition: width var(--transition-normal);
+}
+
+.side-panel.collapsed {
+    width: 0;
+    border-right: none;
+}
+
+/* Drag-to-resize handle */
+.panel-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 4px;
+    height: 100%;
+    cursor: col-resize;
+    z-index: 20;
+    transition: background var(--transition-fast);
+}
+
+.panel-resize-handle:hover,
+.panel-resize-handle.dragging {
+    background: var(--accent-primary);
+}
+
+/* =============================================================================
+   Panel (content for each activity)
+   ============================================================================= */
+
+.panel {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+    overflow: hidden;
+}
+
+.panel.active {
+    display: flex;
+}
+
+.panel-title {
+    padding: 6px var(--space-md) 6px var(--space-md);
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+.panel-body {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+/* Panel footer (connection status) */
+.side-panel-footer {
+    padding: var(--space-sm) var(--space-md);
+    border-top: 1px solid var(--border-primary);
+    flex-shrink: 0;
+}
+
+/* =============================================================================
+   Panel Sections (collapsible, like VS Code sidebar sections)
+   ============================================================================= */
+
+.panel-section {
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.panel-section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px var(--space-md);
+    cursor: pointer;
+    user-select: none;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    letter-spacing: 0.8px;
+    text-transform: uppercase;
+    transition: background var(--transition-fast);
+}
+
+.panel-section-header:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.panel-section-chevron {
+    transition: transform var(--transition-fast);
+    color: var(--text-tertiary);
+    flex-shrink: 0;
+}
+
+.panel-section-chevron.collapsed {
+    transform: rotate(-90deg);
+}
+
+.panel-section-body {
+    padding: var(--space-sm) var(--space-md) var(--space-md);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.panel-section-body.collapsed {
+    display: none;
+}
+
+/* =============================================================================
+   File Explorer
+   ============================================================================= */
+
+.explorer-workspace-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px var(--space-md);
+    background: var(--bg-tertiary);
+    border-bottom: 1px solid var(--border-primary);
+    gap: var(--space-xs);
+    flex-shrink: 0;
+}
+
+.explorer-workspace-path {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.explorer-workspace-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.explorer-action-btn {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.explorer-action-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+/* File Tree */
+.file-tree {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: var(--space-xs) 0;
+    font-size: var(--text-sm);
+    user-select: none;
+}
+
+.file-tree-loading,
+.file-tree-empty,
+.file-tree-error {
+    padding: var(--space-md);
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+    text-align: center;
+}
+
+.file-tree-error {
+    color: var(--accent-danger);
+}
+
+/* Tree Items */
+.tree-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.tree-item-row {
+    display: flex;
+    align-items: center;
+    height: 22px;
+    padding-right: var(--space-sm);
+    cursor: pointer;
+    border-radius: 0;
+    transition: background var(--transition-fast);
+    white-space: nowrap;
+    position: relative;
+}
+
+.tree-item-row:hover {
+    background: var(--bg-hover);
+}
+
+.tree-item-row.selected {
+    background: var(--accent-primary-bg);
+    color: var(--accent-primary);
+}
+
+.tree-item-row.workspace {
+    background: rgba(34, 197, 94, 0.1);
+}
+
+.tree-indent {
+    flex-shrink: 0;
+    /* width set inline via style */
+}
+
+.tree-chevron {
+    width: 16px;
+    height: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    color: var(--text-tertiary);
+    transition: transform var(--transition-fast);
+}
+
+.tree-chevron.open {
+    transform: rotate(90deg);
+}
+
+.tree-chevron-spacer {
+    width: 16px;
+    flex-shrink: 0;
+}
+
+.tree-icon {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-right: 4px;
+}
+
+.tree-icon svg {
+    width: 16px;
+    height: 16px;
+}
+
+.tree-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: var(--text-sm);
+    color: var(--text-primary);
+    line-height: 22px;
+}
+
+.tree-name.hidden-file {
+    color: var(--text-tertiary);
+}
+
+/* Workspace indicator badge */
+.tree-workspace-badge {
+    font-size: 10px;
+    padding: 0 5px;
+    background: var(--accent-success-bg);
+    color: var(--accent-success);
+    border-radius: var(--radius-full);
+    font-weight: 600;
+    margin-left: var(--space-xs);
+    flex-shrink: 0;
+}
+
+/* Tree children container */
+.tree-children {
+    display: none;
+}
+
+.tree-children.open {
+    display: flex;
+    flex-direction: column;
+}
+
+/* Loading spinner in tree */
+.tree-loading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-xs);
+    padding: 2px 8px;
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+}
+
+/* =============================================================================
+   Context Menu
+   ============================================================================= */
+
+.context-menu {
+    position: fixed;
+    z-index: 2000;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-xs) 0;
+    min-width: 200px;
+    font-size: var(--text-sm);
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    padding: 6px var(--space-md);
+    cursor: pointer;
+    color: var(--text-primary);
+    transition: background var(--transition-fast);
+    white-space: nowrap;
+}
+
+.context-menu-item:hover {
+    background: var(--bg-hover);
+}
+
+.context-menu-item.danger {
+    color: var(--accent-danger);
+}
+
+.context-menu-separator {
+    height: 1px;
+    background: var(--border-primary);
+    margin: var(--space-xs) 0;
+}
+
+/* =============================================================================
+   Mobile - hide activity bar, use overlay
+   ============================================================================= */
+
+@media (max-width: 768px) {
+    .activity-bar {
+        display: none;
+    }
+
+    .side-panel {
+        position: fixed;
+        top: var(--header-height);
+        left: 0;
+        bottom: 0;
+        z-index: 100;
+        width: 280px !important;
+        transform: translateX(-100%);
+        transition: transform var(--transition-normal);
+        border-right: 1px solid var(--border-primary);
+    }
+
+    .side-panel.mobile-open {
+        transform: translateX(0);
+        box-shadow: var(--shadow-xl);
+    }
+
+    .side-panel.collapsed {
+        width: 280px !important;
+        transform: translateX(-100%);
+    }
+
+    .panel-resize-handle {
+        display: none;
+    }
+}
