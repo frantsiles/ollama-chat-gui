@@ -166,7 +166,7 @@ const MCP = {
     _bindEvents() {
         document.addEventListener('click', (e) => {
             if (e.target.id === 'mcp-backdrop') this.close();
-            if (e.target.id === 'mcp-close') this.close();
+            if (e.target.closest('#mcp-close')) this.close();
         });
 
         document.getElementById('mcp-connect-all').addEventListener('click', () => this._connectAll());
