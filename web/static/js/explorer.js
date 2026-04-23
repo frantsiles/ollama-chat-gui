@@ -265,6 +265,14 @@ const Explorer = {
         let loaded = false;
         let open = false;
 
+        if (item.type !== 'dir') {
+            // Double-click on file → open viewer
+            row.addEventListener('dblclick', (e) => {
+                e.preventDefault();
+                FileViewer.open(item.path, item.name);
+            });
+        }
+
         if (item.type === 'dir') {
             // Single click → expand/collapse
             row.addEventListener('click', async (e) => {
@@ -488,3 +496,138 @@ const Explorer = {
 };
 
 window.Explorer = Explorer;
+
+// =============================================================================
+// File Viewer
+// =============================================================================
+
+const FileViewer = {
+    _currentContent: '',
+
+    open(path, name) {
+        const overlay = document.getElementById('file-viewer-overlay');
+        if (!overlay) return;
+
+        // Reset state
+        document.getElementById('file-viewer-loading').style.display = 'flex';
+        document.getElementById('file-viewer-error').style.display = 'none';
+        document.getElementById('file-viewer-content').style.display = 'none';
+        document.getElementById('file-viewer-name').textContent = name || path.split('/').pop();
+        document.getElementById('file-viewer-path').textContent = path;
+        document.getElementById('file-viewer-meta').textContent = '';
+        document.getElementById('file-viewer-icon').innerHTML = Explorer._svgFile(name || path);
+
+        overlay.style.display = 'flex';
+        document.body.style.overflow = 'hidden';
+
+        this._fetch(path);
+    },
+
+    close() {
+        const overlay = document.getElementById('file-viewer-overlay');
+        if (overlay) overlay.style.display = 'none';
+        document.body.style.overflow = '';
+    },
+
+    async _fetch(path) {
+        try {
+            const res = await fetch('/api/file-content?path=' + encodeURIComponent(path));
+            const data = await res.json();
+
+            if (!res.ok) {
+                this._showError(data.detail || 'Error al leer el archivo');
+                return;
+            }
+
+            this._render(data);
+        } catch (err) {
+            this._showError('Error de red: ' + String(err));
+        }
+    },
+
+    _render(data) {
+        this._currentContent = data.content;
+
+        // Meta info
+        const kb = data.size < 1024 ? data.size + ' B' : (data.size / 1024).toFixed(1) + ' KB';
+        document.getElementById('file-viewer-meta').textContent =
+            `${data.lines} líneas · ${kb} · .${data.ext || 'txt'}`;
+
+        // Build line numbers
+        const linesEl = document.getElementById('file-viewer-lines');
+        linesEl.innerHTML = Array.from({ length: data.lines }, (_, i) =>
+            `<span>${i + 1}</span>`
+        ).join('');
+
+        // Syntax highlighting
+        const codeEl = document.getElementById('file-viewer-code');
+        const escaped = data.content
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        codeEl.innerHTML = escaped;
+
+        const lang = this._langFromExt(data.ext);
+        if (window.hljs && lang) {
+            codeEl.className = 'language-' + lang;
+            try { hljs.highlightElement(codeEl); } catch (_) {}
+        } else if (window.hljs) {
+            codeEl.className = '';
+            try { hljs.highlightElement(codeEl); } catch (_) {}
+        }
+
+        // Sync theme
+        this._syncTheme();
+
+        document.getElementById('file-viewer-loading').style.display = 'none';
+        document.getElementById('file-viewer-content').style.display = 'flex';
+    },
+
+    _showError(msg) {
+        document.getElementById('file-viewer-loading').style.display = 'none';
+        const el = document.getElementById('file-viewer-error');
+        el.textContent = msg;
+        el.style.display = 'flex';
+    },
+
+    _syncTheme() {
+        const isDark = document.documentElement.getAttribute('data-theme') !== 'light';
+        const dark = document.getElementById('hljs-theme-dark');
+        const light = document.getElementById('hljs-theme-light');
+        if (dark) dark.disabled = !isDark;
+        if (light) light.disabled = isDark;
+    },
+
+    _langFromExt(ext) {
+        return {
+            py: 'python', js: 'javascript', ts: 'typescript', jsx: 'javascript',
+            tsx: 'typescript', html: 'html', css: 'css', json: 'json',
+            md: 'markdown', sh: 'bash', bash: 'bash', yml: 'yaml',
+            yaml: 'yaml', toml: 'toml', rs: 'rust', go: 'go',
+            java: 'java', c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp',
+            rb: 'ruby', php: 'php', sql: 'sql', xml: 'xml',
+            dockerfile: 'dockerfile', tf: 'hcl', lua: 'lua',
+            r: 'r', scala: 'scala', kt: 'kotlin', swift: 'swift',
+        }[ext] || null;
+    },
+
+    init() {
+        document.getElementById('file-viewer-close')?.addEventListener('click', () => this.close());
+        document.getElementById('file-viewer-overlay')?.addEventListener('click', (e) => {
+            if (e.target.id === 'file-viewer-overlay') this.close();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape' && document.getElementById('file-viewer-overlay')?.style.display !== 'none') {
+                this.close();
+            }
+        });
+        document.getElementById('file-viewer-copy')?.addEventListener('click', () => {
+            if (this._currentContent) {
+                Utils.copyToClipboard(this._currentContent);
+                Utils.showToast('Contenido copiado', 'success');
+            }
+        });
+    },
+};
+
+window.FileViewer = FileViewer;

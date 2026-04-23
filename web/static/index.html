@@ -17,6 +17,9 @@
     <link rel="stylesheet" href="/static/css/chat.css">
     <link rel="stylesheet" href="/static/css/mcp.css">
     <link rel="stylesheet" href="/static/css/explorer.css">
+    <!-- Highlight.js for syntax highlighting in file viewer -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" id="hljs-theme-dark">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" id="hljs-theme-light" disabled>
 </head>
 <body>
     <div id="app">
@@ -340,7 +343,47 @@
     <!-- Toast Container -->
     <div class="toast-container" id="toast-container"></div>
 
+    <!-- File Viewer Modal -->
+    <div id="file-viewer-overlay" class="file-viewer-overlay" style="display:none" role="dialog" aria-modal="true">
+        <div class="file-viewer-modal">
+            <div class="file-viewer-header">
+                <div class="file-viewer-title">
+                    <span class="file-viewer-icon" id="file-viewer-icon"></span>
+                    <span class="file-viewer-name" id="file-viewer-name"></span>
+                    <span class="file-viewer-path" id="file-viewer-path"></span>
+                </div>
+                <div class="file-viewer-actions">
+                    <span class="file-viewer-meta" id="file-viewer-meta"></span>
+                    <button class="file-viewer-copy-btn" id="file-viewer-copy" title="Copiar contenido">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>
+                        Copiar
+                    </button>
+                    <button class="file-viewer-close-btn" id="file-viewer-close" title="Cerrar (Esc)">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+            <div class="file-viewer-body" id="file-viewer-body">
+                <div class="file-viewer-loading" id="file-viewer-loading">
+                    <div class="file-viewer-spinner"></div>
+                    <span>Cargando archivo...</span>
+                </div>
+                <div class="file-viewer-error" id="file-viewer-error" style="display:none"></div>
+                <div class="file-viewer-content" id="file-viewer-content" style="display:none">
+                    <div class="file-viewer-lines" id="file-viewer-lines" aria-hidden="true"></div>
+                    <pre class="file-viewer-pre"><code id="file-viewer-code"></code></pre>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
     <script src="/static/js/utils.js"></script>
     <script src="/static/js/websocket.js"></script>
     <script src="/static/js/chat.js"></script>

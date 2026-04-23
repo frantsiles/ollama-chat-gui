@@ -271,6 +271,61 @@ async def list_files(path: str = "") -> Dict[str, Any]:
 
 
 # =============================================================================
+# File Content Reader
+# =============================================================================
+
+MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
+
+@router.get("/file-content")
+async def read_file_content(path: str) -> Dict[str, Any]:
+    """Lee el contenido de un archivo de texto para el visor."""
+    import os, mimetypes
+
+    try:
+        target = Path(path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    if not target.is_file():
+        raise HTTPException(status_code=400, detail="La ruta no es un archivo")
+
+    size = target.stat().st_size
+    if size > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Archivo demasiado grande ({size // 1024} KB). Límite: {MAX_FILE_SIZE // 1024} KB"
+        )
+
+    mime, _ = mimetypes.guess_type(str(target))
+    is_binary = mime and not (
+        mime.startswith("text/") or
+        mime in {"application/json", "application/xml", "application/javascript",
+                 "application/x-yaml", "application/toml", "application/x-sh"}
+    )
+
+    if is_binary:
+        raise HTTPException(status_code=415, detail="Archivo binario no soportado")
+
+    try:
+        content = target.read_text(encoding="utf-8", errors="replace")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+
+    ext = target.suffix.lstrip(".").lower()
+
+    return {
+        "path": str(target),
+        "name": target.name,
+        "ext": ext,
+        "size": size,
+        "content": content,
+        "lines": content.count("\n") + 1,
+    }
+
+
+# =============================================================================
 # Health Check
 # =============================================================================
 

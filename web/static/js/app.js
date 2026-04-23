@@ -39,6 +39,7 @@ const App = {
         // Initialize all modules (defensive)
         Utils.log('APP', 'Initializing modules...');
         this.safeInitModule('Explorer', window.Explorer);
+        this.safeInitModule('FileViewer', window.FileViewer);
         this.safeInitModule('Sidebar', window.Sidebar);
         this.safeInitModule('Plan', window.Plan);
         this.safeInitModule('Modes', window.Modes);
@@ -110,9 +111,11 @@ const App = {
     toggleTheme() {
         const currentTheme = document.documentElement.getAttribute('data-theme');
         const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-        
+
         document.documentElement.setAttribute('data-theme', newTheme);
         Utils.storage.set('theme', newTheme);
+
+        if (window.FileViewer) FileViewer._syncTheme();
     },
 
     /**
