@@ -687,6 +687,47 @@ class Agent:
     # Native function calling (Ollama tools API)
     # ------------------------------------------------------------------
 
+    def _extract_native_tool_calls_from_content(
+        self, content: str
+    ) -> List[Dict[str, Any]]:
+        """Extrae tool calls del content cuando el modelo las embebe ahí
+        en lugar de usar el campo tool_calls del API.
+
+        Soporta dos formatos:
+        - Nativo Ollama: {"name": "tool_name", "arguments": {...}}
+        - ReAct/JSON:    {"tool": "tool_name", "args": {...}}
+        """
+        result: List[Dict[str, Any]] = []
+        all_known = set(ToolRegistry.AVAILABLE_TOOLS.keys()) | ToolRegistry.VIRTUAL_TOOLS
+        # Incluir herramientas dinámicas registradas (MCP, etc.)
+        all_known |= set(self.tool_registry._dynamic_executors.keys())
+
+        candidates = ToolRegistry._extract_json_candidates(content)
+        for candidate in candidates:
+            try:
+                data = _json.loads(candidate)
+            except _json.JSONDecodeError:
+                continue
+            if not isinstance(data, dict):
+                continue
+
+            # Formato nativo Ollama: {"name": "...", "arguments": {...}}
+            if "name" in data and "arguments" in data:
+                name = data["name"]
+                args = data["arguments"]
+                if isinstance(name, str) and isinstance(args, dict) and name in all_known:
+                    result.append({"function": {"name": name, "arguments": args}})
+                    continue
+
+            # Formato ReAct: {"tool": "...", "args": {...}}
+            if "tool" in data and "args" in data:
+                name = data["tool"]
+                args = data["args"]
+                if isinstance(name, str) and isinstance(args, dict) and name in all_known:
+                    result.append({"function": {"name": name, "arguments": args}})
+
+        return result
+
     def _run_with_native_tools(
         self,
         user_input: str,
@@ -756,7 +797,18 @@ class Agent:
             tool_calls_raw = response.get("tool_calls", [])
             content = response.get("content", "").strip()
 
-            # Sin tool calls → respuesta final
+            # El modelo a veces embebe la tool call en content en lugar de
+            # usar el campo tool_calls del API — intentamos rescatarla.
+            if not tool_calls_raw and content:
+                recovered = self._extract_native_tool_calls_from_content(content)
+                if recovered:
+                    self.state.add_trace(
+                        f"Paso {step}: tool call recuperada del content"
+                    )
+                    tool_calls_raw = recovered
+                    content = ""
+
+            # Sin tool calls → respuesta final genuina
             if not tool_calls_raw:
                 if not content:
                     content = "No se generó respuesta."
