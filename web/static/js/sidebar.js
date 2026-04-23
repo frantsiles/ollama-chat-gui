@@ -38,10 +38,11 @@ const Sidebar = {
 
     _syncWorkspaceToExplorer() {
         if (!wsManager?.sessionId) return;
+        const savedWs = () => Utils.storage.get('settings', {}).workspacePath || '';
         fetch(`/api/sessions/${wsManager.sessionId}/config`)
             .then(r => r.json())
             .then(data => {
-                const ws = data.workspace_root || '';
+                const ws = data.workspace_root || savedWs();
                 if (ws && window.Explorer) {
                     Explorer.setWorkspace(ws);
                 }
@@ -49,7 +50,13 @@ const Sidebar = {
                     this.workspacePath.textContent = Utils.truncatePath(ws, 40);
                 }
             })
-            .catch(() => {});
+            .catch(() => {
+                const ws = savedWs();
+                if (ws && window.Explorer) Explorer.setWorkspace(ws);
+                if (ws && this.workspacePath) {
+                    this.workspacePath.textContent = Utils.truncatePath(ws, 40);
+                }
+            });
     },
 
     bindEvents() {

@@ -346,6 +346,7 @@ const Explorer = {
             });
             if (res.ok) {
                 this.workspacePath = path;
+                this.currentPath = path;
                 this._updateWorkspaceBar(path);
                 // Also update Config panel workspace display
                 const wp = document.getElementById('workspace-path');
@@ -355,9 +356,9 @@ const Explorer = {
                     workspacePath: path
                 });
                 Utils.showToast('Workspace actualizado: ' + path, 'success');
-                // Refresh tree to update workspace badge
+                // Navigate tree to new workspace
                 const tree = document.getElementById('file-tree');
-                if (tree) this._loadTree(this.currentPath || path, tree, 0);
+                if (tree) this._loadTree(path, tree, 0);
             }
         } catch {
             Utils.showToast('Error al cambiar workspace', 'error');
