@@ -5,7 +5,7 @@ from __future__ import annotations
 import fnmatch
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import List
 
 from config import MAX_READ_CHARS, MAX_SCAN_RESULTS, RAG_IGNORED_DIRS
 from tools.base import BaseTool, ToolError, ToolParameter, ToolResult

@@ -11,11 +11,10 @@ from uuid import uuid4
 from config import (
     ApprovalLevel,
     DEFAULT_WORKSPACE_ROOT,
-    OLLAMA_BASE_URL,
     OLLAMA_DEFAULT_MODEL,
     OperationMode,
 )
-from core.models import Conversation, Message, MessageRole, Plan
+from core.models import Conversation, Message, MessageRole
 
 
 @dataclass

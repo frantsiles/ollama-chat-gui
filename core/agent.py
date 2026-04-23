@@ -7,7 +7,7 @@ import json as _json
 import re as _re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Generator, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from config import (
     MAX_AGENT_STEPS,
@@ -31,7 +31,7 @@ from core.models import (
 )
 from llm.client import OllamaClient, OllamaClientError
 from llm.prompts import PromptManager
-from security.approval import ApprovalManager, ApprovalStatus
+from security.approval import ApprovalManager
 from tools.registry import ToolRegistry
 
 
@@ -465,7 +465,7 @@ class Agent:
         self.state.mode = OperationMode.CHAT
         
         # Agregar mensaje del usuario
-        user_msg = conversation.add_user_message(
+        conversation.add_user_message(
             content=user_input,
             attachments=attachments or [],
             images=images or [],
@@ -742,7 +742,6 @@ class Agent:
         herramientas se envían como mensajes role='tool', lo que produce un
         diálogo más natural y confiable en modelos compatibles.
         """
-        from config import FUNCTION_CALLING_ENABLED
         from tools.mcp_manager import MCPManager
 
         tool_results: List[ToolResult] = []
@@ -866,14 +865,11 @@ class Agent:
                 # Ejecutar: primero herramienta local, luego MCP
                 if self.tool_registry.is_dynamic_tool(tool_name):
                     tool_output = self.tool_registry.execute_dynamic(tool_name, tool_args)
-                    tool_success = True
                 elif mcp.has_tools and any(t.full_name == tool_name for t in mcp.get_all_tools()):
                     tool_output = mcp.execute_tool_sync(tool_name, tool_args)
-                    tool_success = not tool_output.startswith("Error")
                 else:
                     result = self.tool_registry.execute(tc_model)
                     tool_output = result.output if result.success else f"Error: {result.error}"
-                    tool_success = result.success
                     tool_results.append(result)
                     if result.new_cwd:
                         self.set_cwd(Path(result.new_cwd))

@@ -6,7 +6,7 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional
 
 from config import (
     BLOCKED_COMMAND_PATTERNS,
@@ -16,7 +16,7 @@ from config import (
     WRITE_COMMAND_PREFIXES,
     WRITE_GIT_SUBCOMMANDS,
 )
-from tools.base import BaseTool, ToolError, ToolParameter, ToolResult
+from tools.base import BaseTool, ToolParameter, ToolResult
 
 
 class CommandValidator:

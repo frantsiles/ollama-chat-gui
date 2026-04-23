@@ -6,17 +6,9 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from fastapi import WebSocket, WebSocketDisconnect
-
-# Setup logger
-logger = logging.getLogger("websocket")
-logger.setLevel(logging.DEBUG)
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setFormatter(logging.Formatter('[%(asctime)s] [WS] %(message)s', '%H:%M:%S'))
-    logger.addHandler(handler)
 
 from config import (
     MAX_ATTACHMENT_CHARS_PER_FILE,
@@ -27,11 +19,19 @@ from config import (
     OperationMode,
 )
 from core.agent import Agent, AgentResponse
-from core.models import Conversation, Plan, PlanStatus, ToolCall
+from core.models import Plan, PlanStatus, ToolCall
 from core.planner import PlanManager
 from llm.client import OllamaClient, OllamaClientError
 from web.state import Session, SessionManager
 from web.metrics import MetricsCollector
+
+# Setup logger
+logger = logging.getLogger("websocket")
+logger.setLevel(logging.DEBUG)
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter('[%(asctime)s] [WS] %(message)s', '%H:%M:%S'))
+    logger.addHandler(handler)
 
 
 class ConnectionManager:

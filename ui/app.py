@@ -4,18 +4,17 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, List, Tuple
 
 import streamlit as st
 
 from config import (
     MAX_FILE_SIZE_BYTES,
-    MAX_FILE_SIZE_MB,
     MAX_TEXT_CHARS_PER_FILE,
     OperationMode,
     TEXT_FILE_EXTENSIONS,
 )
-from core.agent import Agent, AgentResponse
+from core.agent import Agent
 from core.models import Conversation, Plan, ToolCall
 from core.planner import PlanManager
 from llm.client import OllamaClient, OllamaClientError

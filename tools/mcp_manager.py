@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from tools.mcp_client import MCPClient, MCPServerConfig, MCPToolDefinition, MCP_AVAILABLE
+from tools.mcp_client import MCPClient, MCPServerConfig, MCPToolDefinition
 
 
 class MCPManager:

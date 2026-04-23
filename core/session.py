@@ -6,7 +6,6 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
 from core.models import Conversation, Message, MessageRole
 

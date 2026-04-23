@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Type
 
 from core.models import ToolCall, ToolResult as ModelToolResult
-from tools.base import BaseTool, ToolError, ToolResult
+from tools.base import BaseTool
 from tools.command import CommandValidator, RunCommandTool
 from tools.filesystem import (
     CreateDirectoryTool,

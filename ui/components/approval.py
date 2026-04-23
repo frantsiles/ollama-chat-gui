@@ -42,7 +42,6 @@ def render_approval_dialog(
         
         if tool_call.args:
             with st.expander("Ver argumentos"):
-                import json
                 st.json(tool_call.args)
     
     st.divider()

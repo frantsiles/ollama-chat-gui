@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from config import ApprovalLevel, OLLAMA_BASE_URL, OperationMode
 from llm.client import OllamaClient, OllamaClientError
-from web.state import Session, SessionManager
+from web.state import SessionManager
 from web.api_rag import router as rag_router
 from web.api_memory import router as memory_router
 
@@ -228,7 +228,6 @@ async def get_current_plan(session_id: str) -> Dict[str, Any]:
 @router.get("/files")
 async def list_files(path: str = "") -> Dict[str, Any]:
     """Lista el contenido de un directorio para el explorador de archivos."""
-    import os
 
     if not path:
         path = str(Path.home())
@@ -279,7 +278,7 @@ MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
 @router.get("/file-content")
 async def read_file_content(path: str) -> Dict[str, Any]:
     """Lee el contenido de un archivo de texto para el visor."""
-    import os, mimetypes
+    import mimetypes
 
     try:
         target = Path(path).expanduser().resolve()

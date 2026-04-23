@@ -10,8 +10,6 @@ from typing import Any, Dict, List, Optional
 from config import MAX_PLAN_STEPS, OperationMode
 from core.models import (
     Conversation,
-    Message,
-    MessageRole,
     Plan,
     PlanStatus,
     PlanStep,
@@ -19,7 +17,6 @@ from core.models import (
 )
 from llm.client import OllamaClient, OllamaClientError
 from llm.prompts import PromptManager
-from tools.registry import ToolRegistry
 
 
 # Patrón para extraer JSON de plan

@@ -147,8 +147,9 @@ class LocalRAG:
             return None
 
     def clear_cache(self) -> None:
-        """Vacía el caché de contenido de archivos."""
+        """Vacía el caché de contenido de archivos y el caché de archivos."""
         self._mtime_cache.clear()
+        self._cache.clear()
     
     def _tokenize(self, text: str) -> List[str]:
         """Tokeniza texto en palabras."""
@@ -304,6 +305,3 @@ class LocalRAG:
         except (ValueError, OSError):
             return None
     
-    def clear_cache(self) -> None:
-        """Limpia la caché de archivos."""
-        self._cache.clear()

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+import re
+from pathlib import Path as _Path
 
 # =============================================================================
 # Ollama Configuration
@@ -68,7 +69,6 @@ MAX_ATTACHMENT_CHARS_PER_FILE = 4000
 # =============================================================================
 # Persistence
 # =============================================================================
-from pathlib import Path as _Path
 PERSISTENCE_DB_PATH = _Path(
     os.getenv(
         "CHAT_DB_PATH",
@@ -168,8 +168,6 @@ SUPPORTED_TOOLS = {
 # =============================================================================
 # Blocked Command Patterns (Security)
 # =============================================================================
-import re
-
 BLOCKED_COMMAND_PATTERNS = (
     (
         re.compile(r"(^|[;&|])\s*sudo\b", re.IGNORECASE),

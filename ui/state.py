@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from pathlib import Path
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
@@ -15,7 +14,6 @@ from config import (
     OLLAMA_DEFAULT_MODEL,
     OperationMode,
 )
-from core.models import Conversation, Plan
 
 
 @dataclass

@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Optional, Tuple
+from typing import Tuple
 
 import streamlit as st
 
-from config import ApprovalLevel, OLLAMA_BASE_URL, OLLAMA_DEFAULT_MODEL, OperationMode
+from config import ApprovalLevel, OLLAMA_DEFAULT_MODEL, OperationMode
 from llm.client import OllamaClient, OllamaClientError
 from ui.state import AppState
 
