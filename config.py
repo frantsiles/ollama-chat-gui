@@ -47,6 +47,8 @@ PYTHON_SANDBOX_TIMEOUT_SECONDS: int = int(os.getenv("PYTHON_SANDBOX_TIMEOUT_SECO
 MAX_AGENT_STEPS = 12
 MAX_PLAN_STEPS = 20
 MAX_TOOL_REPAIR_CHARS = 16000
+# Tiempo máximo (segundos) para que el agente complete una tarea antes de cancelarse
+AGENT_TASK_TIMEOUT: int = int(os.getenv("AGENT_TASK_TIMEOUT", "300"))
 
 # =============================================================================
 # Context Management

@@ -11,6 +11,7 @@ from typing import Any, Dict
 from fastapi import WebSocket, WebSocketDisconnect
 
 from config import (
+    AGENT_TASK_TIMEOUT,
     MAX_ATTACHMENT_CHARS_PER_FILE,
     MAX_ATTACHMENT_CHARS_TOTAL,
     MAX_INPUT_CHARS,
@@ -222,27 +223,46 @@ async def handle_chat_message(
                     )
                 )
 
-                while not agent_task.done():
-                    try:
+                async def _drain_and_wait() -> AgentResponse:
+                    """Drenar step_queue mientras el agente trabaja y retornar su resultado."""
+                    while not agent_task.done():
+                        try:
+                            step_msg = step_queue.get_nowait()
+                            await websocket.send_json({
+                                "type": "agent_step",
+                                "message": step_msg,
+                            })
+                        except asyncio.QueueEmpty:
+                            await asyncio.sleep(0.1)
+                    # Drenar lo que quedó al terminar
+                    while not step_queue.empty():
                         step_msg = step_queue.get_nowait()
                         await websocket.send_json({
                             "type": "agent_step",
                             "message": step_msg,
                         })
-                    except asyncio.QueueEmpty:
-                        await asyncio.sleep(0.1)
+                    exc = agent_task.exception()
+                    if exc:
+                        raise exc
+                    return agent_task.result()
 
-                while not step_queue.empty():
-                    step_msg = step_queue.get_nowait()
+                try:
+                    response = await asyncio.wait_for(
+                        _drain_and_wait(), timeout=AGENT_TASK_TIMEOUT
+                    )
+                except asyncio.TimeoutError:
+                    agent_task.cancel()
+                    metric.finish("timeout")
                     await websocket.send_json({
-                        "type": "agent_step",
-                        "message": step_msg,
+                        "type": "error",
+                        "message": (
+                            f"El agente tardó más de {AGENT_TASK_TIMEOUT}s "
+                            "y fue cancelado automáticamente."
+                        ),
                     })
+                    SessionManager.save(session)
+                    return
 
-                exc = agent_task.exception()
-                if exc:
-                    raise exc
-                response = agent_task.result()
                 metric.steps = len(response.trace)
 
             elif session.mode == OperationMode.PLAN:

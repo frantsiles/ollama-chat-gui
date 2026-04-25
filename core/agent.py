@@ -564,9 +564,6 @@ class Agent:
         # Comprimir contexto si la conversación es larga
         self._maybe_summarize(conversation)
 
-        # Agregar contexto del workspace
-        self._add_workspace_context(conversation)
-
         # Agregar mensaje del usuario
         conversation.add_user_message(
             content=user_input,
@@ -809,6 +806,22 @@ class Agent:
         """
         from llm.prompts import NATURAL_AGENT_SYSTEM_PROMPT
 
+        # Construir system prompt con el workspace context embebido (fresco en cada run)
+        entries: List[str] = []
+        try:
+            for item in self.current_cwd.glob("*"):
+                if len(entries) >= 60:
+                    break
+                entries.append(f"{item.name}{'/' if item.is_dir() else ''}")
+        except OSError:
+            pass
+        workspace_ctx = PromptManager.build_workspace_context(
+            workspace_root=str(self.workspace_root),
+            current_cwd=str(self.current_cwd),
+            entries=sorted(entries),
+        )
+        full_system_prompt = f"{NATURAL_AGENT_SYSTEM_PROMPT}\n{workspace_ctx}"
+
         tool_results: List[ToolResult] = []
         # Mensajes intermedios de este run (no se persisten en conversation)
         extra_messages: List[Dict[str, Any]] = []
@@ -833,7 +846,7 @@ class Agent:
 
             # Mensajes: historial de conversación + pasos intermedios de este run
             messages = self._build_messages(
-                conversation, system_prompt=NATURAL_AGENT_SYSTEM_PROMPT
+                conversation, system_prompt=full_system_prompt
             )
             messages.extend(extra_messages)
 

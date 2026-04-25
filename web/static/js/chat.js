@@ -157,7 +157,11 @@ const Chat = {
         wsManager.on('error', (data) => {
             this.isProcessing = false;
             this.hideTypingIndicator();
-            Utils.showToast(data.message || 'Error', 'error');
+            this.renderMessage({
+                role: 'assistant',
+                content: `⚠️ ${data.message || 'Error al procesar la solicitud.'}`,
+                timestamp: new Date().toISOString()
+            });
         });
 
         wsManager.on('agent_step', (data) => {
@@ -177,6 +181,19 @@ const Chat = {
             this.isProcessing = false;
             this.hideTypingIndicator();
             Plan.showPlan(data.plan);
+        });
+
+        wsManager.on('connectionChange', (status) => {
+            if (status === 'disconnected' && this.isProcessing) {
+                this.isProcessing = false;
+                this.hideTypingIndicator();
+                this.renderMessage({
+                    role: 'assistant',
+                    content: '🔌 La conexión se interrumpió mientras el agente procesaba tu solicitud. Puedes volver a intentarlo.',
+                    timestamp: new Date().toISOString()
+                });
+            }
+            this.updateSendButton();
         });
     },
 
@@ -513,12 +530,6 @@ const Chat = {
         this.sendBtn.disabled = !hasContent || this.isProcessing || !isConnected;
     },
 
-    /**
-     * Called when connection status changes
-     */
-    onConnectionChange(status) {
-        this.updateSendButton();
-    }
 };
 
 // Make available globally
