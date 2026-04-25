@@ -8,6 +8,60 @@ from config import OperationMode
 
 
 # =============================================================================
+# Natural Agent Prompts (modo natural: texto libre + parser separado)
+# =============================================================================
+
+NATURAL_AGENT_SYSTEM_PROMPT = """\
+Eres un asistente de IA para tareas de desarrollo en un workspace local.
+Responde siempre en el mismo idioma que el usuario.
+
+Tienes acceso a herramientas para interactuar con el workspace cuando lo necesites:
+leer y escribir archivos, listar directorios, buscar archivos, ejecutar comandos \
+y ejecutar código Python.
+
+Cuando necesites usar una herramienta, indícalo claramente en tu respuesta.
+Ejemplos:
+  "Voy a leer el archivo config.py para revisar la configuración."
+  "Necesito listar el contenido del directorio src/."
+  "Ejecutaré 'git status' para ver los cambios pendientes."
+  "Voy a escribir el archivo resultado.txt con el contenido generado."
+
+Para mensajes conversacionales (saludos, preguntas, explicaciones), responde \
+directamente sin mencionar herramientas.
+
+Sé conciso y útil. No le pidas al usuario archivos que puedes leer tú mismo.
+"""
+
+NATURAL_PARSER_PROMPT = """\
+Eres un extractor de intenciones. Recibirás la respuesta de un asistente de IA \
+y debes determinar si intenta usar una herramienta del workspace.
+
+Herramientas disponibles:
+{tools_description}
+
+REGLAS ESTRICTAS:
+1. Solo detecta una tool si el texto la menciona o implica CLARAMENTE.
+2. Mensajes conversacionales, saludos o explicaciones puras → needs_tool: false.
+3. En caso de duda → needs_tool: false.
+4. Extrae solo UNA tool (la primera o más importante mencionada).
+5. Los args deben ser valores concretos extraídos del texto. Nunca vacíos ni inventados.
+
+Responde SOLO JSON válido, sin texto adicional ni markdown:
+Sin tool: {{"needs_tool": false}}
+Con tool: {{"needs_tool": true, "tool": "nombre", "args": {{"arg1": "valor"}}}}
+"""
+
+_TOOLS_DESCRIPTION_FOR_PARSER = """\
+- read_file(path) → leer contenido de un archivo
+- write_file(path, content, append=false) → escribir o crear un archivo
+- list_directory(path=".") → listar archivos y carpetas de un directorio
+- create_directory(path) → crear un directorio
+- search_files(pattern, path=".") → buscar archivos por nombre o patrón
+- run_command(command) → ejecutar un comando de shell en el workspace
+- execute_python(code) → ejecutar código Python y obtener el resultado"""
+
+
+# =============================================================================
 # Base System Prompts
 # =============================================================================
 
@@ -287,6 +341,15 @@ class PromptManager:
         base = PromptManager.get_system_prompt(mode, custom_instructions)
         if memory_context:
             return f"{memory_context}\n\n{base}"
+        return base
+
+    @staticmethod
+    def get_tools_description_for_parser(extra_tools: Optional[List[str]] = None) -> str:
+        """Descripción compacta de tools para el prompt del parser."""
+        base = _TOOLS_DESCRIPTION_FOR_PARSER
+        if extra_tools:
+            extras = "\n".join(f"- {t}" for t in extra_tools)
+            return f"{base}\n{extras}"
         return base
 
     @staticmethod

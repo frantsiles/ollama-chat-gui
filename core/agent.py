@@ -267,6 +267,45 @@ class Agent:
         return ToolRegistry.extract_tool_call(repaired)
     
     # ------------------------------------------------------------------
+    # Parser de respuestas naturales
+    # ------------------------------------------------------------------
+
+    def _parse_natural_response(self, response: str) -> Dict[str, Any]:
+        """Segunda llamada al modelo para extraer tool calls de texto libre.
+
+        Retorna {"needs_tool": False} o {"needs_tool": True, "tool": "...", "args": {...}}.
+        Ante cualquier fallo devuelve needs_tool=False para no romper el flujo.
+        """
+        from llm.prompts import NATURAL_PARSER_PROMPT, PromptManager
+
+        # Incluir nombres de tools dinámicas (MCP, etc.) en la descripción
+        extra: list[str] = []
+        if hasattr(self.tool_registry, "_dynamic_executors"):
+            for name in self.tool_registry._dynamic_executors:
+                extra.append(f"{name}(...) → herramienta dinámica registrada")
+
+        tools_desc = PromptManager.get_tools_description_for_parser(extra or None)
+        parser_prompt = NATURAL_PARSER_PROMPT.format(tools_description=tools_desc)
+
+        messages = [
+            {"role": "system", "content": parser_prompt},
+            {"role": "user", "content": response},
+        ]
+
+        try:
+            raw = self._call_model(messages, fmt="json").strip()
+            if raw.startswith("```"):
+                lines = raw.splitlines()
+                raw = "\n".join(lines[1:-1]) if len(lines) > 2 else raw
+            data = _json.loads(raw)
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+
+        return {"needs_tool": False}
+
+    # ------------------------------------------------------------------
     # Reflexión crítica (auto-revisión de respuestas)
     # ------------------------------------------------------------------
 
@@ -535,152 +574,11 @@ class Agent:
             images=images or [],
         )
 
-        # Usar function calling nativo cuando el modelo lo soporte
-        from config import FUNCTION_CALLING_ENABLED
-        if FUNCTION_CALLING_ENABLED and self.client.model_supports_tools(self.model):
-            self.state.add_trace("Modo: function calling nativo")
-            return self._run_with_native_tools(
-                user_input=user_input,
-                conversation=conversation,
-                step_callback=step_callback,
-                cancel_check=cancel_check,
-            )
-
-        tool_results: List[ToolResult] = []
-        
-        for step in range(1, MAX_AGENT_STEPS + 1):
-            self.state.step_count = step
-
-            # Verificar cancelación antes de consultar al modelo
-            if cancel_check and cancel_check():
-                cancel_msg = "Cancelado por el usuario."
-                self.state.add_trace(cancel_msg)
-                self.state.is_running = False
-                return AgentResponse(
-                    content="Ejecución cancelada por el usuario.",
-                    status="cancelled",
-                    trace=self.state.trace,
-                    tool_results=tool_results,
-                    new_cwd=str(self.current_cwd),
-                )
-
-            trace_consulta = f"Paso {step}: consultando al modelo"
-            self.state.add_trace(trace_consulta)
-            if step_callback:
-                step_callback(trace_consulta)
-            
-            # Llamar al modelo forzando JSON válido (ayuda a modelos como Gemma
-            # que tienden a ignorar instrucciones de formato estricto)
-            messages = self._build_messages(conversation)
-
-            try:
-                response = self._call_model(messages, fmt="json")
-            except OllamaClientError as e:
-                self.state.is_running = False
-                return AgentResponse(
-                    content="",
-                    status="error",
-                    error=str(e),
-                    trace=self.state.trace,
-                    tool_results=tool_results,
-                )
-
-            if not response.strip():
-                self.state.add_trace(f"Paso {step}: respuesta vacía, reintentando")
-                continue
-
-            # Intentar extraer tool call (incluyendo la virtual "final_answer")
-            tool_call = ToolRegistry.extract_tool_call(response)
-
-            if not tool_call and ToolRegistry.looks_like_tool_call(response):
-                self.state.add_trace(f"Paso {step}: intentando reparar tool call malformada")
-                tool_call = self._repair_tool_call(response)
-
-            # final_answer: el modelo señala explícitamente que terminó
-            if tool_call and tool_call.tool == "final_answer":
-                self.state.add_trace(f"Paso {step}: respuesta final via final_answer")
-                final_content = tool_call.args.get("content", "").strip() or response
-                final_content = self._reflect_on_response(final_content, conversation)
-                conversation.add_assistant_message(final_content)
-                self.state.is_running = False
-                self._maybe_extract_memories(user_input, final_content)
-                return AgentResponse(
-                    content=final_content,
-                    status="completed",
-                    trace=self.state.trace,
-                    tool_results=tool_results,
-                    new_cwd=str(self.current_cwd),
-                )
-
-            if not tool_call:
-                # Fallback: el JSON no coincide con ninguna tool conocida
-                self.state.add_trace(f"Paso {step}: respuesta final sin tool")
-                response = self._reflect_on_response(response, conversation)
-                conversation.add_assistant_message(response)
-                self.state.is_running = False
-                self._maybe_extract_memories(user_input, response)
-                return AgentResponse(
-                    content=response,
-                    status="completed",
-                    trace=self.state.trace,
-                    tool_results=tool_results,
-                    new_cwd=str(self.current_cwd),
-                )
-            
-            # Validar tool call
-            validation_error = self.tool_registry.validate_tool_call(tool_call)
-            if validation_error:
-                self.state.add_trace(f"Paso {step}: tool inválida - {validation_error}")
-                conversation.add_system_message(
-                    f"Error en tool call: {validation_error}"
-                )
-                continue
-            
-            # Verificar si requiere aprobación
-            is_write = self.tool_registry.is_tool_write_operation(tool_call)
-            if self.approval_manager.requires_approval(tool_call, is_write):
-                self.state.add_trace(f"Paso {step}: esperando aprobación para {tool_call}")
-                self.state.pending_approval = tool_call
-                self.approval_manager.request_approval(tool_call)
-                
-                return AgentResponse(
-                    content=f"Se requiere aprobación para: `{tool_call}`",
-                    status="awaiting_approval",
-                    trace=self.state.trace,
-                    tool_results=tool_results,
-                    new_cwd=str(self.current_cwd),
-                )
-            
-            # Ejecutar tool
-            trace_exec = f"Paso {step}: ejecutando {tool_call.tool}"
-            self.state.add_trace(trace_exec)
-            if step_callback:
-                step_callback(trace_exec)
-            result = self.tool_registry.execute(tool_call)
-            tool_results.append(result)
-            
-            # Actualizar CWD si cambió
-            if result.new_cwd:
-                self.set_cwd(Path(result.new_cwd))
-            
-            # Agregar resultado al contexto
-            observation = PromptManager.build_tool_result_context(
-                step=step,
-                tool_call=str(tool_call),
-                result=result.output if result.success else f"Error: {result.error}",
-            )
-            conversation.add_system_message(observation)
-        
-        # Límite de pasos alcanzado
-        self.state.add_trace(f"Límite de {MAX_AGENT_STEPS} pasos alcanzado")
-        self.state.is_running = False
-        
-        return AgentResponse(
-            content=f"Se alcanzó el límite de {MAX_AGENT_STEPS} pasos.",
-            status="max_steps",
-            trace=self.state.trace,
-            tool_results=tool_results,
-            new_cwd=str(self.current_cwd),
+        return self._run_natural(
+            user_input=user_input,
+            conversation=conversation,
+            step_callback=step_callback,
+            cancel_check=cancel_check,
         )
     
     # ------------------------------------------------------------------
@@ -880,6 +778,165 @@ class Agent:
                 })
 
         # Límite de pasos alcanzado
+        self.state.add_trace(f"Límite de {MAX_AGENT_STEPS} pasos alcanzado")
+        self.state.is_running = False
+        return AgentResponse(
+            content=f"Se alcanzó el límite de {MAX_AGENT_STEPS} pasos.",
+            status="max_steps",
+            trace=self.state.trace,
+            tool_results=tool_results,
+            new_cwd=str(self.current_cwd),
+        )
+
+    # ------------------------------------------------------------------
+    # Modo natural: texto libre → parser → tool (sin JSON forzado)
+    # ------------------------------------------------------------------
+
+    def _run_natural(
+        self,
+        user_input: str,
+        conversation: Conversation,
+        step_callback: Optional[Callable[[str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> AgentResponse:
+        """Ciclo agente sin JSON forzado en el modelo principal.
+
+        Flujo por paso:
+          1. Modelo principal responde en texto libre.
+          2. Parser (segunda llamada, mismo modelo) detecta si hay tool call.
+          3. Si hay tool → validar → aprobar → ejecutar → continuar.
+          4. Si no hay tool → es la respuesta final.
+        """
+        from llm.prompts import NATURAL_AGENT_SYSTEM_PROMPT
+
+        tool_results: List[ToolResult] = []
+        # Mensajes intermedios de este run (no se persisten en conversation)
+        extra_messages: List[Dict[str, Any]] = []
+
+        for step in range(1, MAX_AGENT_STEPS + 1):
+            self.state.step_count = step
+
+            if cancel_check and cancel_check():
+                self.state.is_running = False
+                return AgentResponse(
+                    content="Ejecución cancelada por el usuario.",
+                    status="cancelled",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                )
+
+            trace_msg = f"Paso {step}: consultando al modelo"
+            self.state.add_trace(trace_msg)
+            if step_callback:
+                step_callback(trace_msg)
+
+            # Mensajes: historial de conversación + pasos intermedios de este run
+            messages = self._build_messages(
+                conversation, system_prompt=NATURAL_AGENT_SYSTEM_PROMPT
+            )
+            messages.extend(extra_messages)
+
+            try:
+                response_text = self._call_model(messages)  # Sin fmt="json"
+            except OllamaClientError as e:
+                self.state.is_running = False
+                return AgentResponse(
+                    content="",
+                    status="error",
+                    error=str(e),
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                )
+
+            if not response_text.strip():
+                self.state.add_trace(f"Paso {step}: respuesta vacía, reintentando")
+                continue
+
+            # Detectar si la respuesta implica una tool call
+            self.state.add_trace(f"Paso {step}: analizando respuesta con parser")
+            parsed = self._parse_natural_response(response_text)
+
+            if not parsed.get("needs_tool"):
+                # Respuesta final conversacional
+                response_text = self._reflect_on_response(response_text, conversation)
+                conversation.add_assistant_message(response_text)
+                self.state.is_running = False
+                self._maybe_extract_memories(user_input, response_text)
+                return AgentResponse(
+                    content=response_text,
+                    status="completed",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                )
+
+            tool_name = parsed.get("tool", "")
+            tool_args = parsed.get("args", {})
+
+            if not tool_name:
+                # Parser inconsistente: needs_tool=true pero sin nombre
+                response_text = self._reflect_on_response(response_text, conversation)
+                conversation.add_assistant_message(response_text)
+                self.state.is_running = False
+                self._maybe_extract_memories(user_input, response_text)
+                return AgentResponse(
+                    content=response_text,
+                    status="completed",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                )
+
+            tool_call = ToolCall(tool=tool_name, args=tool_args if isinstance(tool_args, dict) else {})
+
+            # Validar tool call
+            validation_error = self.tool_registry.validate_tool_call(tool_call)
+            if validation_error:
+                self.state.add_trace(f"Paso {step}: tool inválida - {validation_error}")
+                extra_messages.append({"role": "assistant", "content": response_text})
+                extra_messages.append({
+                    "role": "system",
+                    "content": f"La tool '{tool_name}' no pudo ejecutarse: {validation_error}. Continúa sin ella.",
+                })
+                continue
+
+            # Verificar aprobación
+            is_write = self.tool_registry.is_tool_write_operation(tool_call)
+            if self.approval_manager.requires_approval(tool_call, is_write):
+                self.state.pending_approval = tool_call
+                self.approval_manager.request_approval(tool_call)
+                conversation.add_assistant_message(response_text)
+                self.state.is_running = False
+                return AgentResponse(
+                    content=f"Se requiere aprobación para: `{tool_call}`",
+                    status="awaiting_approval",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                )
+
+            # Ejecutar tool
+            exec_trace = f"Paso {step}: ejecutando {tool_call.tool}"
+            self.state.add_trace(exec_trace)
+            if step_callback:
+                step_callback(exec_trace)
+
+            result = self.tool_registry.execute(tool_call)
+            tool_results.append(result)
+
+            if result.new_cwd:
+                self.set_cwd(Path(result.new_cwd))
+
+            # Guardar respuesta del asistente + resultado en extra_messages
+            extra_messages.append({"role": "assistant", "content": response_text})
+            observation = PromptManager.build_tool_result_context(
+                step=step,
+                tool_call=str(tool_call),
+                result=result.output if result.success else f"Error: {result.error}",
+            )
+            extra_messages.append({"role": "system", "content": observation})
+
         self.state.add_trace(f"Límite de {MAX_AGENT_STEPS} pasos alcanzado")
         self.state.is_running = False
         return AgentResponse(
