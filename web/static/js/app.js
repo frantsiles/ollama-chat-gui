@@ -41,6 +41,8 @@ const App = {
         Utils.log('APP', 'Initializing modules...');
         this.safeInitModule('Explorer', window.Explorer);
         this.safeInitModule('FileViewer', window.FileViewer);
+        this.safeInitModule('QuickOpen', window.QuickOpen);
+        this.safeInitModule('SearchPanel', window.SearchPanel);
         this.safeInitModule('Sidebar', window.Sidebar);
         this.safeInitModule('Plan', window.Plan);
         this.safeInitModule('Modes', window.Modes);

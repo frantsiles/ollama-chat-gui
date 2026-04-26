@@ -282,6 +282,167 @@ async def list_files(path: str = "") -> Dict[str, Any]:
 
 
 # =============================================================================
+# File Search (by name)
+# =============================================================================
+
+_IGNORE_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv',
+                '.mypy_cache', '.pytest_cache', 'dist', 'build', '.next',
+                '.nuxt', 'coverage', '.tox'}
+
+@router.get("/files/search")
+async def search_files(path: str = "", q: str = "") -> Dict[str, Any]:
+    """Busca archivos por nombre (fuzzy) dentro de un directorio."""
+    if not q:
+        return {"items": []}
+    if not path:
+        path = str(Path.home())
+
+    try:
+        root = Path(path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+
+    if not root.is_dir():
+        raise HTTPException(status_code=400, detail="La ruta no es un directorio")
+
+    q_lower = q.lower()
+    results: list[Dict[str, Any]] = []
+    MAX_RESULTS = 50
+
+    def _walk(d: Path, depth: int = 0):
+        if depth > 12 or len(results) >= MAX_RESULTS:
+            return
+        try:
+            for entry in sorted(d.iterdir(), key=lambda e: (e.is_dir(), e.name.lower())):
+                if len(results) >= MAX_RESULTS:
+                    return
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name in _IGNORE_DIRS:
+                        continue
+                    _walk(entry, depth + 1)
+                else:
+                    if q_lower in entry.name.lower():
+                        try:
+                            rel = entry.relative_to(root)
+                        except ValueError:
+                            rel = entry
+                        results.append({
+                            "name": entry.name,
+                            "path": str(entry),
+                            "rel_path": str(rel),
+                        })
+        except PermissionError:
+            pass
+
+    _walk(root)
+    return {"items": results}
+
+
+# =============================================================================
+# File Grep (search in content)
+# =============================================================================
+
+@router.get("/files/grep")
+async def grep_files(
+    path: str = "",
+    q: str = "",
+    case_sensitive: bool = False,
+) -> Dict[str, Any]:
+    """Busca texto en el contenido de archivos del workspace."""
+    if not q:
+        return {"groups": []}
+    if not path:
+        path = str(Path.home())
+
+    try:
+        root = Path(path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+
+    if not root.is_dir():
+        raise HTTPException(status_code=400, detail="La ruta no es un directorio")
+
+    import mimetypes, re as _re
+
+    pattern_flags = 0 if case_sensitive else _re.IGNORECASE
+    try:
+        pattern = _re.compile(_re.escape(q), pattern_flags)
+    except _re.error:
+        raise HTTPException(status_code=400, detail="Patrón inválido")
+
+    MAX_FILE_SIZE_GREP = 512 * 1024  # 512 KB per file
+    MAX_MATCHES_PER_FILE = 30
+    MAX_FILES = 30
+    groups: list[Dict[str, Any]] = []
+
+    def _is_text(p: Path) -> bool:
+        mime, _ = mimetypes.guess_type(str(p))
+        if mime is None:
+            # Try by extension whitelist
+            return p.suffix.lower() in {
+                '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.json',
+                '.md', '.txt', '.sh', '.yml', '.yaml', '.toml', '.ini', '.cfg',
+                '.env', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.hpp',
+                '.rb', '.php', '.sql', '.xml', '.tf', '.lua', '.r', '.scala',
+                '.kt', '.swift', '.vim', '.dockerfile', '', '.gitignore',
+            }
+        return mime.startswith("text/") or mime in {
+            "application/json", "application/xml", "application/javascript",
+            "application/x-yaml", "application/toml", "application/x-sh",
+        }
+
+    def _walk_grep(d: Path, depth: int = 0):
+        if depth > 12 or len(groups) >= MAX_FILES:
+            return
+        try:
+            for entry in sorted(d.iterdir(), key=lambda e: (e.is_dir(), e.name.lower())):
+                if len(groups) >= MAX_FILES:
+                    return
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name in _IGNORE_DIRS:
+                        continue
+                    _walk_grep(entry, depth + 1)
+                elif entry.is_file(follow_symlinks=False):
+                    try:
+                        if entry.stat().st_size > MAX_FILE_SIZE_GREP:
+                            continue
+                        if not _is_text(entry):
+                            continue
+                        text = entry.read_text(encoding="utf-8", errors="replace")
+                    except (PermissionError, OSError):
+                        continue
+
+                    matches = []
+                    for i, line in enumerate(text.splitlines(), 1):
+                        if len(matches) >= MAX_MATCHES_PER_FILE:
+                            break
+                        m = pattern.search(line)
+                        if m:
+                            matches.append({
+                                "line_no": i,
+                                "line": line[:200],  # truncate long lines
+                                "match_start": m.start(),
+                                "match_end": m.end(),
+                            })
+                    if matches:
+                        try:
+                            rel = entry.relative_to(root)
+                        except ValueError:
+                            rel = entry
+                        groups.append({
+                            "file_name": entry.name,
+                            "file_path": str(entry),
+                            "rel_path": str(rel),
+                            "matches": matches,
+                        })
+        except PermissionError:
+            pass
+
+    _walk_grep(root)
+    return {"groups": groups, "total_files": len(groups)}
+
+
+# =============================================================================
 # File Content Reader
 # =============================================================================
 

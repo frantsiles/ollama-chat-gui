@@ -632,3 +632,279 @@ const FileViewer = {
 };
 
 window.FileViewer = FileViewer;
+
+// =============================================================================
+// Quick Open  (Ctrl+P)
+// =============================================================================
+
+const QuickOpen = {
+    _selectedIdx: -1,
+    _items: [],
+    _debounce: null,
+
+    init() {
+        this._overlay = document.getElementById('quick-open-overlay');
+        this._input   = document.getElementById('quick-open-input');
+        this._results = document.getElementById('quick-open-results');
+
+        if (!this._overlay) return;
+
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'p') {
+                e.preventDefault();
+                this.open();
+            }
+        });
+
+        this._overlay.addEventListener('click', (e) => {
+            if (e.target === this._overlay) this.close();
+        });
+
+        this._input.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { this.close(); return; }
+            if (e.key === 'ArrowDown') { e.preventDefault(); this._move(1); return; }
+            if (e.key === 'ArrowUp')   { e.preventDefault(); this._move(-1); return; }
+            if (e.key === 'Enter')     { e.preventDefault(); this._confirm(); return; }
+        });
+
+        this._input.addEventListener('input', () => {
+            clearTimeout(this._debounce);
+            this._debounce = setTimeout(() => this._search(), 180);
+        });
+    },
+
+    open() {
+        this._overlay.hidden = false;
+        this._input.value = '';
+        this._input.focus();
+        this._results.innerHTML = '<div class="quick-open-empty">Escribe para buscar archivos</div>';
+        this._items = [];
+        this._selectedIdx = -1;
+        document.body.style.overflow = 'hidden';
+    },
+
+    close() {
+        this._overlay.hidden = true;
+        document.body.style.overflow = '';
+        clearTimeout(this._debounce);
+    },
+
+    async _search() {
+        const q = this._input.value.trim();
+        const path = Explorer.workspacePath;
+
+        if (!q) {
+            this._results.innerHTML = '<div class="quick-open-empty">Escribe para buscar archivos</div>';
+            this._items = [];
+            return;
+        }
+        if (!path) {
+            this._results.innerHTML = '<div class="quick-open-empty">Selecciona un workspace primero</div>';
+            return;
+        }
+
+        this._results.innerHTML = '<div class="quick-open-loading">Buscando...</div>';
+
+        try {
+            const res = await fetch('/api/files/search?path=' + encodeURIComponent(path) + '&q=' + encodeURIComponent(q));
+            if (!res.ok) throw new Error();
+            const data = await res.json();
+            this._render(data.items, q);
+        } catch {
+            this._results.innerHTML = '<div class="quick-open-no-results">Error al buscar</div>';
+        }
+    },
+
+    _render(items, q) {
+        this._items = items;
+        this._selectedIdx = items.length ? 0 : -1;
+
+        if (!items.length) {
+            this._results.innerHTML = '<div class="quick-open-no-results">Sin resultados para "<b>' + Utils.escapeHtml(q) + '</b>"</div>';
+            return;
+        }
+
+        this._results.innerHTML = '';
+        items.forEach((item, i) => {
+            const el = document.createElement('div');
+            el.className = 'quick-open-item' + (i === 0 ? ' active' : '');
+            el.dataset.idx = i;
+            el.innerHTML = `
+                <span class="quick-open-item-icon">${Explorer._svgFile(item.name)}</span>
+                <span class="quick-open-item-name">${this._highlight(item.name, q)}</span>
+                <span class="quick-open-item-rel">${Utils.escapeHtml(item.rel_path)}</span>
+            `;
+            el.addEventListener('click', () => {
+                this._selectedIdx = i;
+                this._confirm();
+            });
+            el.addEventListener('mousemove', () => {
+                this._select(i);
+            });
+            this._results.appendChild(el);
+        });
+    },
+
+    _highlight(name, q) {
+        const escaped = Utils.escapeHtml(name);
+        const ql = q.toLowerCase();
+        const idx = name.toLowerCase().indexOf(ql);
+        if (idx === -1) return escaped;
+        return Utils.escapeHtml(name.slice(0, idx))
+            + '<mark>' + Utils.escapeHtml(name.slice(idx, idx + q.length)) + '</mark>'
+            + Utils.escapeHtml(name.slice(idx + q.length));
+    },
+
+    _move(dir) {
+        if (!this._items.length) return;
+        const next = Math.max(0, Math.min(this._items.length - 1, this._selectedIdx + dir));
+        this._select(next);
+    },
+
+    _select(idx) {
+        const rows = this._results.querySelectorAll('.quick-open-item');
+        rows.forEach((r, i) => r.classList.toggle('active', i === idx));
+        this._selectedIdx = idx;
+        rows[idx]?.scrollIntoView({ block: 'nearest' });
+    },
+
+    _confirm() {
+        const item = this._items[this._selectedIdx];
+        if (!item) return;
+        this.close();
+        FileViewer.open(item.path, item.name);
+    },
+};
+
+window.QuickOpen = QuickOpen;
+
+// =============================================================================
+// Search Panel  (Ctrl+Shift+F)
+// =============================================================================
+
+const SearchPanel = {
+    _debounce: null,
+    _groupStates: {},   // rel_path → collapsed bool
+
+    init() {
+        this._input      = document.getElementById('search-panel-query');
+        this._caseCb     = document.getElementById('search-case-sensitive');
+        this._status     = document.getElementById('search-panel-status');
+        this._results    = document.getElementById('search-panel-results');
+
+        if (!this._input) return;
+
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'F') {
+                e.preventDefault();
+                Explorer.setPanel('search');
+                Explorer._expandSidePanel();
+                this._input.focus();
+            }
+        });
+
+        this._input.addEventListener('input', () => {
+            clearTimeout(this._debounce);
+            this._debounce = setTimeout(() => this._search(), 350);
+        });
+
+        this._caseCb.addEventListener('change', () => {
+            clearTimeout(this._debounce);
+            this._debounce = setTimeout(() => this._search(), 100);
+        });
+    },
+
+    async _search() {
+        const q    = this._input.value.trim();
+        const path = Explorer.workspacePath;
+
+        if (!q) {
+            this._status.textContent = '';
+            this._results.innerHTML = '<div class="search-panel-empty">Escribe para buscar en archivos</div>';
+            return;
+        }
+        if (!path) {
+            this._status.textContent = '';
+            this._results.innerHTML = '<div class="search-panel-empty">Selecciona un workspace primero</div>';
+            return;
+        }
+
+        this._status.textContent = 'Buscando…';
+        this._results.innerHTML = '';
+
+        try {
+            const cs  = this._caseCb.checked ? '1' : '0';
+            const url = `/api/files/grep?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&case_sensitive=${cs}`;
+            const res = await fetch(url);
+            if (!res.ok) throw new Error();
+            const data = await res.json();
+            this._render(data.groups, q);
+        } catch {
+            this._status.textContent = 'Error al buscar';
+        }
+    },
+
+    _render(groups, q) {
+        if (!groups.length) {
+            this._status.textContent = 'Sin resultados';
+            this._results.innerHTML = '<div class="search-panel-no-results">No se encontró ninguna coincidencia</div>';
+            return;
+        }
+
+        const totalMatches = groups.reduce((s, g) => s + g.matches.length, 0);
+        this._status.textContent = `${totalMatches} resultado${totalMatches !== 1 ? 's' : ''} en ${groups.length} archivo${groups.length !== 1 ? 's' : ''}`;
+        this._results.innerHTML = '';
+
+        groups.forEach(group => {
+            const collapsed = this._groupStates[group.rel_path] ?? false;
+            const el = document.createElement('div');
+            el.className = 'search-group';
+
+            const header = document.createElement('div');
+            header.className = 'search-group-header';
+            header.innerHTML = `
+                <svg class="search-group-chevron${collapsed ? ' collapsed' : ''}" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <polyline points="9 18 15 12 9 6"/>
+                </svg>
+                <span class="search-group-filename">${Utils.escapeHtml(group.file_name)}</span>
+                <span class="search-group-relpath">${Utils.escapeHtml(group.rel_path)}</span>
+                <span class="search-group-count">${group.matches.length}</span>
+            `;
+
+            const matchList = document.createElement('div');
+            matchList.className = 'search-group-matches' + (collapsed ? ' collapsed' : '');
+
+            header.addEventListener('click', () => {
+                const isCollapsed = matchList.classList.toggle('collapsed');
+                header.querySelector('.search-group-chevron').classList.toggle('collapsed', isCollapsed);
+                this._groupStates[group.rel_path] = isCollapsed;
+            });
+
+            group.matches.forEach(m => {
+                const row = document.createElement('div');
+                row.className = 'search-match-row';
+                row.innerHTML = `
+                    <span class="search-match-lineno">${m.line_no}</span>
+                    <span class="search-match-line">${this._highlightLine(m.line, m.match_start, m.match_end)}</span>
+                `;
+                row.addEventListener('click', () => {
+                    FileViewer.open(group.file_path, group.file_name);
+                });
+                matchList.appendChild(row);
+            });
+
+            el.appendChild(header);
+            el.appendChild(matchList);
+            this._results.appendChild(el);
+        });
+    },
+
+    _highlightLine(line, start, end) {
+        const esc = Utils.escapeHtml;
+        return esc(line.slice(0, start))
+            + '<mark>' + esc(line.slice(start, end)) + '</mark>'
+            + esc(line.slice(end));
+    },
+};
+
+window.SearchPanel = SearchPanel;
