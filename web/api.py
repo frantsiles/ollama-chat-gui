@@ -730,6 +730,66 @@ async def read_file_content(path: str) -> Dict[str, Any]:
 
 
 # =============================================================================
+# Git Status
+# =============================================================================
+
+@router.get("/git/status")
+async def git_status(path: str = "") -> Dict[str, Any]:
+    """
+    Runs `git status --porcelain` in *path* and returns a map of
+    relative_path → status_code  (e.g. "M", "A", "D", "?", "R", "C", "U").
+    Returns an empty map if the directory is not a git repo.
+    """
+    import asyncio
+
+    if not path:
+        return {"files": {}, "is_git": False}
+
+    try:
+        root = Path(path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+
+    if not root.is_dir():
+        raise HTTPException(status_code=400, detail="La ruta no es un directorio")
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain", "-u",
+            cwd=str(root),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+    except FileNotFoundError:
+        return {"files": {}, "is_git": False, "error": "git not found"}
+    except asyncio.TimeoutError:
+        return {"files": {}, "is_git": False, "error": "git timeout"}
+
+    if proc.returncode == 128:          # not a git repo
+        return {"files": {}, "is_git": False}
+
+    files: dict[str, str] = {}
+    for line in stdout.decode(errors="replace").splitlines():
+        if len(line) < 4:
+            continue
+        xy = line[:2]
+        rel = line[3:]
+        # For renames: "R old -> new" — track the new name
+        if " -> " in rel:
+            rel = rel.split(" -> ", 1)[1]
+        rel = rel.strip().strip('"')
+        # Determine single-letter badge: prioritise index status, fall back to worktree
+        x, y = xy[0], xy[1]
+        badge = x if x != " " else y
+        if badge == "?":
+            badge = "U"   # Untracked shown as U
+        files[rel] = badge
+
+    return {"files": files, "is_git": True}
+
+
+# =============================================================================
 # Health Check
 # =============================================================================
 

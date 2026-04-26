@@ -130,9 +130,9 @@
                 <div class="panel" data-panel="explorer" id="panel-explorer">
                     <div class="panel-title">Explorador</div>
 
-                    <!-- Workspace bar -->
+                    <!-- Workspace bar: breadcrumbs -->
                     <div class="explorer-workspace-bar">
-                        <span class="explorer-workspace-path" id="explorer-workspace-path">~/</span>
+                        <nav class="explorer-breadcrumbs" id="explorer-breadcrumbs" aria-label="Ruta actual"></nav>
                         <div class="explorer-workspace-actions">
                             <button class="explorer-action-btn" id="explorer-nav-home" title="Ir al home">
                                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -156,8 +156,39 @@
                         </div>
                     </div>
 
+                    <!-- Multi-selection action bar (hidden until selection > 0) -->
+                    <div class="explorer-selection-bar" id="explorer-selection-bar" hidden>
+                        <span class="selection-count" id="selection-count">0 seleccionados</span>
+                        <div class="selection-actions">
+                            <button type="button" class="selection-action-btn" id="sel-attach" title="Adjuntar al chat">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                                </svg>
+                            </button>
+                            <button type="button" class="selection-action-btn" id="sel-copy-paths" title="Copiar rutas">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                                </svg>
+                            </button>
+                            <button type="button" class="selection-action-btn danger" id="sel-delete" title="Eliminar seleccionados">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                    <path d="M10 11v6M14 11v6"/>
+                                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                </svg>
+                            </button>
+                            <button type="button" class="selection-action-btn" id="sel-clear" title="Limpiar selección">
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+
                     <!-- File Tree -->
-                    <div class="file-tree" id="file-tree">
+                    <div class="file-tree" id="file-tree" tabindex="0">
                         <div class="file-tree-loading">Selecciona un workspace para explorar</div>
                     </div>
                 </div>

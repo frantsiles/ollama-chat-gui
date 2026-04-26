@@ -24,6 +24,7 @@ const Explorer = {
         ExplorerDialog.init();
         this._bindOsDropZone();
         this._bindChatDropZone();
+        this._bindTreeKeyboard();
         this.setPanel('explorer');
         // File tree loads after we know the workspace (Sidebar.onConnected sets it)
     },
@@ -183,6 +184,7 @@ const Explorer = {
         this.currentPath = path;
         this._updateWorkspaceBar(path);
         if (window.FileWatcher) FileWatcher.onWorkspaceChange(path);
+        if (window.GitStatus) GitStatus.onWorkspaceChange(path);
 
         // Reload tree root
         const tree = document.getElementById('file-tree');
@@ -193,8 +195,53 @@ const Explorer = {
     },
 
     _updateWorkspaceBar(path) {
-        const el = document.getElementById('explorer-workspace-path');
-        if (el) el.textContent = path || '~';
+        Breadcrumbs.render(path || '');
+    },
+
+    // -------------------------------------------------------------------------
+    // Keyboard navigation for the file tree
+    // -------------------------------------------------------------------------
+
+    _bindTreeKeyboard() {
+        const tree = document.getElementById('file-tree');
+        if (!tree) return;
+
+        tree.addEventListener('keydown', (e) => {
+            const rows = Array.from(tree.querySelectorAll('.tree-item-row:not(.dragging)'));
+            const focused = tree.querySelector('.tree-item-row.focused');
+            let idx = focused ? rows.indexOf(focused) : -1;
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                idx = Math.min(rows.length - 1, idx + 1);
+                this._focusTreeRow(rows, idx, e.shiftKey);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                idx = Math.max(0, idx - 1);
+                this._focusTreeRow(rows, idx, e.shiftKey);
+            } else if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                if (focused) focused.click();
+            } else if (e.key === 'Escape') {
+                TreeSelection.clear();
+            } else if (e.key === 'a' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                rows.forEach(r => TreeSelection.add(r));
+                TreeSelection.updateBar();
+            }
+        });
+    },
+
+    _focusTreeRow(rows, idx, addToSelection) {
+        if (idx < 0 || idx >= rows.length) return;
+        const row = rows[idx];
+        rows.forEach(r => r.classList.remove('focused'));
+        row.classList.add('focused');
+        row.scrollIntoView({ block: 'nearest' });
+        if (addToSelection) {
+            TreeSelection.add(row);
+            TreeSelection.updateBar();
+        }
     },
 
     _bindWorkspaceActions() {
@@ -253,6 +300,11 @@ const Explorer = {
             data.items.forEach(item => {
                 container.appendChild(this._makeTreeItem(item, depth));
             });
+
+            // Apply git badges after the DOM is populated
+            if (depth === 0 && window.GitStatus) {
+                GitStatus.onTreeRefreshed(this.workspacePath);
+            }
         } catch (err) {
             container.innerHTML = `<div class="file-tree-error">Error: ${Utils.escapeHtml(String(err))}</div>`;
         }
@@ -303,6 +355,22 @@ const Explorer = {
         let loaded = false;
         let open = false;
 
+        // Single click with modifier → selection
+        row.addEventListener('click', (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                TreeSelection.toggle(row, item);
+                return;
+            }
+            if (e.shiftKey) {
+                TreeSelection.extendTo(row, item);
+                return;
+            }
+            // Plain click: clear selection (dirs expand below, files open on dblclick)
+            if (TreeSelection.size() > 0) {
+                TreeSelection.clear();
+            }
+        });
+
         if (item.type !== 'dir') {
             // Double-click on file → open viewer
             row.addEventListener('dblclick', (e) => {
@@ -314,6 +382,7 @@ const Explorer = {
         if (item.type === 'dir') {
             // Single click → expand/collapse
             row.addEventListener('click', async (e) => {
+                if (e.ctrlKey || e.metaKey || e.shiftKey) return; // handled above
                 open = !open;
                 children.classList.toggle('open', open);
                 const chevron = row.querySelector('.tree-chevron');
@@ -544,6 +613,7 @@ const Explorer = {
                 });
                 Utils.showToast('Workspace actualizado: ' + path, 'success');
                 if (window.FileWatcher) FileWatcher.onWorkspaceChange(path);
+                if (window.GitStatus) GitStatus.onWorkspaceChange(path);
                 // Navigate tree to new workspace
                 const tree = document.getElementById('file-tree');
                 if (tree) this._loadTree(path, tree, 0);
@@ -1378,6 +1448,289 @@ window.SearchPanel = SearchPanel;
 // File Watcher  (WebSocket-based auto-refresh)
 // =============================================================================
 
+// =============================================================================
+// Breadcrumbs
+// =============================================================================
+
+const Breadcrumbs = {
+    _container: null,
+
+    init() {
+        this._container = document.getElementById('explorer-breadcrumbs');
+    },
+
+    render(fullPath) {
+        if (!this._container) this._container = document.getElementById('explorer-breadcrumbs');
+        if (!this._container) return;
+        this._container.innerHTML = '';
+
+        if (!fullPath) return;
+
+        // Split path into segments, build cumulative paths for each crumb
+        const parts = fullPath.replace(/\\/g, '/').split('/').filter(Boolean);
+        const isAbs = fullPath.startsWith('/');
+
+        // Always show at most the last N segments to avoid overflow
+        const MAX_VISIBLE = 4;
+        const allParts = isAbs ? ['', ...parts] : parts;  // '' = root '/'
+        const start = Math.max(0, allParts.length - MAX_VISIBLE);
+
+        if (start > 0) {
+            // Show ellipsis for hidden ancestors
+            const ellipsis = document.createElement('span');
+            ellipsis.className = 'bc-item';
+            ellipsis.title = fullPath;
+            ellipsis.textContent = '…';
+            // Clicking ellipsis goes to the hidden ancestor
+            const hiddenParts = allParts.slice(0, start);
+            const hiddenPath = (isAbs ? '/' : '') + hiddenParts.filter(Boolean).join('/');
+            ellipsis.addEventListener('click', () => Explorer.navigateTo(hiddenPath));
+            this._container.appendChild(ellipsis);
+            this._container.appendChild(this._sep());
+        }
+
+        allParts.slice(start).forEach((part, i) => {
+            const absIdx = start + i;
+            // Build cumulative path up to this segment
+            const cumParts = allParts.slice(0, absIdx + 1).filter(Boolean);
+            const cumPath = (isAbs ? '/' : '') + cumParts.join('/') || '/';
+            const isLast = absIdx === allParts.length - 1;
+            const label = part === '' ? '/' : part;  // root shows as /
+
+            const crumb = document.createElement('span');
+            crumb.className = 'bc-item';
+            crumb.textContent = label;
+            crumb.title = cumPath;
+
+            if (!isLast) {
+                crumb.addEventListener('click', () => Explorer.navigateTo(cumPath));
+                this._container.appendChild(crumb);
+                this._container.appendChild(this._sep());
+            } else {
+                this._container.appendChild(crumb);
+            }
+        });
+    },
+
+    _sep() {
+        const s = document.createElement('span');
+        s.className = 'bc-sep';
+        s.textContent = '›';
+        s.setAttribute('aria-hidden', 'true');
+        return s;
+    },
+};
+
+window.Breadcrumbs = Breadcrumbs;
+
+// =============================================================================
+// TreeSelection  (Ctrl/Shift click + bulk actions)
+// =============================================================================
+
+const TreeSelection = {
+    // Map<row element, item object>
+    _selected: new Map(),
+    _lastRow: null,
+
+    init() {
+        document.getElementById('sel-attach')?.addEventListener('click', () => this._bulkAttach());
+        document.getElementById('sel-copy-paths')?.addEventListener('click', () => this._bulkCopyPaths());
+        document.getElementById('sel-delete')?.addEventListener('click', () => this._bulkDelete());
+        document.getElementById('sel-clear')?.addEventListener('click', () => this.clear());
+    },
+
+    size() { return this._selected.size; },
+
+    toggle(row, item) {
+        if (this._selected.has(row)) {
+            this._selected.delete(row);
+            row.classList.remove('selected');
+        } else {
+            this._selected.set(row, item);
+            row.classList.add('selected');
+            this._lastRow = row;
+        }
+        this.updateBar();
+    },
+
+    add(row) {
+        const wrap = row.closest('.tree-item');
+        if (!wrap) return;
+        const item = {
+            path: wrap.dataset.path,
+            type: wrap.dataset.type,
+            name: wrap.querySelector('.tree-name')?.textContent || '',
+        };
+        this._selected.set(row, item);
+        row.classList.add('selected');
+        this._lastRow = row;
+    },
+
+    extendTo(row, item) {
+        if (!this._lastRow) {
+            this.toggle(row, item);
+            return;
+        }
+        const tree = document.getElementById('file-tree');
+        if (!tree) return;
+        const rows = Array.from(tree.querySelectorAll('.tree-item-row'));
+        const a = rows.indexOf(this._lastRow);
+        const b = rows.indexOf(row);
+        if (a === -1 || b === -1) { this.toggle(row, item); return; }
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        rows.slice(lo, hi + 1).forEach(r => this.add(r));
+        this.updateBar();
+    },
+
+    clear() {
+        this._selected.forEach((_, row) => row.classList.remove('selected'));
+        this._selected.clear();
+        this._lastRow = null;
+        this.updateBar();
+    },
+
+    updateBar() {
+        const bar = document.getElementById('explorer-selection-bar');
+        const countEl = document.getElementById('selection-count');
+        if (!bar) return;
+        const n = this._selected.size;
+        bar.hidden = n === 0;
+        if (countEl) countEl.textContent = `${n} seleccionado${n !== 1 ? 's' : ''}`;
+
+        // Disable attach if any dir is in selection (dirs can't be attached)
+        const attachBtn = document.getElementById('sel-attach');
+        if (attachBtn) {
+            const hasDir = [...this._selected.values()].some(i => i.type === 'dir');
+            attachBtn.disabled = hasDir;
+            attachBtn.style.opacity = hasDir ? '0.4' : '';
+        }
+    },
+
+    items() { return [...this._selected.values()]; },
+
+    async _bulkAttach() {
+        const files = this.items().filter(i => i.type === 'file');
+        for (const item of files) {
+            await Explorer._attachToChat(item);
+        }
+        this.clear();
+    },
+
+    _bulkCopyPaths() {
+        const paths = this.items().map(i => i.path).join('\n');
+        Utils.copyToClipboard(paths);
+        Utils.showToast(`${this._selected.size} rutas copiadas`, 'success');
+        this.clear();
+    },
+
+    async _bulkDelete() {
+        const items = this.items();
+        const n = items.length;
+        ExplorerDialog.confirm(
+            `¿Eliminar ${n} elemento${n !== 1 ? 's' : ''}?`,
+            'Eliminar',
+            async () => {
+                for (const item of items) {
+                    await Explorer._crudDelete(item.path);
+                }
+                this.clear();
+            }
+        );
+    },
+};
+
+window.TreeSelection = TreeSelection;
+
+// =============================================================================
+// GitStatus  (periodic poll + badge overlay)
+// =============================================================================
+
+const GitStatus = {
+    _timer: null,
+    _INTERVAL_MS: 15_000,   // poll every 15 s
+    _cache: {},             // rel_path → badge letter
+    _isGit: false,
+
+    init() {
+        // Triggered by Explorer.setWorkspace and FileWatcher refresh
+    },
+
+    onWorkspaceChange(wsPath) {
+        clearTimeout(this._timer);
+        this._cache = {};
+        this._isGit = false;
+        this._removeAllBadges();
+        if (wsPath) this._poll(wsPath);
+    },
+
+    scheduleRefresh(wsPath) {
+        clearTimeout(this._timer);
+        if (wsPath) this._timer = setTimeout(() => this._poll(wsPath), this._INTERVAL_MS);
+    },
+
+    async _poll(wsPath) {
+        try {
+            const res = await fetch('/api/git/status?path=' + encodeURIComponent(wsPath));
+            if (!res.ok) return;
+            const data = await res.json();
+            this._isGit = data.is_git;
+            this._cache = data.files || {};
+            this._applyBadges(wsPath);
+        } catch {
+            // silently skip on network error
+        }
+        this.scheduleRefresh(wsPath);
+    },
+
+    _applyBadges(wsPath) {
+        const tree = document.getElementById('file-tree');
+        if (!tree) return;
+        this._removeAllBadges();
+        if (!this._isGit || !Object.keys(this._cache).length) return;
+
+        tree.querySelectorAll('.tree-item').forEach(wrap => {
+            const itemPath = wrap.dataset.path;
+            if (!itemPath) return;
+            let rel;
+            try {
+                // Compute path relative to wsPath
+                if (itemPath.startsWith(wsPath + '/')) {
+                    rel = itemPath.slice(wsPath.length + 1);
+                } else {
+                    rel = itemPath;
+                }
+            } catch { return; }
+
+            const badge = this._cache[rel];
+            if (!badge) return;
+
+            const row = wrap.querySelector('.tree-item-row');
+            if (!row) return;
+
+            const span = document.createElement('span');
+            span.className = `git-badge git-badge-${badge}`;
+            span.textContent = badge === 'U' ? '?' : badge;
+            span.title = this._badgeTitle(badge);
+            row.appendChild(span);
+        });
+    },
+
+    _removeAllBadges() {
+        document.querySelectorAll('.git-badge').forEach(el => el.remove());
+    },
+
+    _badgeTitle(b) {
+        return { M: 'Modificado', A: 'Añadido', D: 'Eliminado', R: 'Renombrado', C: 'Copiado', U: 'Sin seguimiento', X: 'Conflicto' }[b] || b;
+    },
+
+    // Called from FileWatcher after a tree refresh so badges get re-applied
+    onTreeRefreshed(wsPath) {
+        if (wsPath && this._isGit) this._applyBadges(wsPath);
+    },
+};
+
+window.GitStatus = GitStatus;
+
 const FileWatcher = {
     _watchPath: null,
     _refreshTimer: null,
@@ -1412,14 +1765,16 @@ const FileWatcher = {
     _scheduleRefresh() {
         clearTimeout(this._refreshTimer);
         this._refreshTimer = setTimeout(() => {
-            // Refresh the file tree root without destroying open subtrees
             const tree = document.getElementById('file-tree');
             if (tree && Explorer.currentPath) {
                 Explorer._loadTree(Explorer.currentPath, tree, 0);
             }
-            // Also re-run any active search
             if (SearchPanel._input?.value.trim()) {
                 SearchPanel._search();
+            }
+            // Re-poll git status after file changes
+            if (window.GitStatus && Explorer.workspacePath) {
+                GitStatus.onWorkspaceChange(Explorer.workspacePath);
             }
         }, this._DEBOUNCE_MS);
     },

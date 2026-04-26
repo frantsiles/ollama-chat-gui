@@ -207,17 +207,152 @@
     border-bottom: 1px solid var(--border-primary);
     gap: var(--space-xs);
     flex-shrink: 0;
+    min-height: 30px;
 }
 
-.explorer-workspace-path {
+/* =============================================================================
+   Breadcrumbs
+   ============================================================================= */
+
+.explorer-breadcrumbs {
+    display: flex;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    gap: 0;
+}
+
+.bc-sep {
+    color: var(--text-tertiary);
+    font-size: 10px;
+    flex-shrink: 0;
+    padding: 0 2px;
+    -webkit-user-select: none;
+    user-select: none;
+}
+
+.bc-item {
     font-family: var(--font-mono);
     font-size: var(--text-xs);
-    color: var(--text-secondary);
-    flex: 1;
+    color: var(--text-tertiary);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
+    padding: 1px 3px;
+    border-radius: var(--radius-sm);
+    transition: color var(--transition-fast), background var(--transition-fast);
+    flex-shrink: 1;
+    min-width: 0;
+    max-width: 120px;
+}
+
+.bc-item:hover {
+    color: var(--text-primary);
+    background: var(--bg-hover);
+}
+
+/* Last crumb = current dir, not clickable */
+.bc-item:last-child {
+    color: var(--text-primary);
+    font-weight: 500;
+    cursor: default;
+    max-width: 160px;
+}
+
+.bc-item:last-child:hover {
+    background: transparent;
+}
+
+/* =============================================================================
+   Multi-selection bar
+   ============================================================================= */
+
+.explorer-selection-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 3px var(--space-md);
+    background: var(--accent-primary-bg);
+    border-bottom: 1px solid var(--accent-primary);
+    flex-shrink: 0;
+    gap: var(--space-sm);
+}
+
+.explorer-selection-bar[hidden] {
+    display: none;
+}
+
+.selection-count {
+    font-size: var(--text-xs);
+    color: var(--accent-primary);
+    font-weight: 600;
     white-space: nowrap;
 }
+
+.selection-actions {
+    display: flex;
+    gap: 2px;
+}
+
+.selection-action-btn {
+    width: 22px;
+    height: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all var(--transition-fast);
+}
+
+.selection-action-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.selection-action-btn.danger:hover {
+    background: rgba(239, 68, 68, 0.12);
+    color: var(--accent-danger);
+}
+
+/* Tree row — selected state */
+.tree-item-row.selected {
+    background: var(--accent-primary-bg);
+}
+
+.tree-item-row.focused {
+    outline: 1px solid var(--accent-primary);
+    outline-offset: -1px;
+}
+
+/* =============================================================================
+   Git status badges
+   ============================================================================= */
+
+.git-badge {
+    font-size: 10px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    flex-shrink: 0;
+    margin-left: auto;
+    padding-right: 4px;
+    min-width: 14px;
+    text-align: right;
+    line-height: 22px;
+}
+
+.git-badge-M { color: #e2b340; }   /* modified  */
+.git-badge-A { color: #89c053; }   /* added     */
+.git-badge-D { color: #f87171; }   /* deleted   */
+.git-badge-R { color: #60a5fa; }   /* renamed   */
+.git-badge-C { color: #a78bfa; }   /* copied    */
+.git-badge-U { color: var(--text-tertiary); }  /* untracked */
+.git-badge-X { color: #f87171; }   /* conflict  }
 
 .explorer-workspace-actions {
     display: flex;
