@@ -7,10 +7,12 @@ const Explorer = {
     activePanel: 'explorer',
     currentPath: null,
     workspacePath: null,
-    contextTarget: null,   // {path, type} for context menu
+    contextTarget: null,   // {path, type, name} for context menu
     _resizing: false,
     _resizeStartX: 0,
     _resizeStartW: 0,
+    _showHidden: false,
+    _useGitignore: true,
 
     init() {
         this._bindActivityBar();
@@ -18,6 +20,10 @@ const Explorer = {
         this._buildContextMenu();
         this._bindGlobalClose();
         this._bindSidebarToggle();
+        this._bindWorkspaceActions();
+        ExplorerDialog.init();
+        this._bindOsDropZone();
+        this._bindChatDropZone();
         this.setPanel('explorer');
         // File tree loads after we know the workspace (Sidebar.onConnected sets it)
     },
@@ -176,6 +182,7 @@ const Explorer = {
         this.workspacePath = path;
         this.currentPath = path;
         this._updateWorkspaceBar(path);
+        if (window.FileWatcher) FileWatcher.onWorkspaceChange(path);
 
         // Reload tree root
         const tree = document.getElementById('file-tree');
@@ -190,12 +197,43 @@ const Explorer = {
         if (el) el.textContent = path || '~';
     },
 
+    _bindWorkspaceActions() {
+        document.getElementById('explorer-nav-home')?.addEventListener('click', () => {
+            const home = document.getElementById('explorer-workspace-path')?.dataset?.home
+                || (location.hostname === 'localhost' ? null : null);
+            this.navigateTo(this.workspacePath || '/');
+        });
+
+        document.getElementById('explorer-refresh')?.addEventListener('click', () => {
+            if (this.currentPath) {
+                const tree = document.getElementById('file-tree');
+                if (tree) this._loadTree(this.currentPath, tree, 0);
+            }
+        });
+
+        const toggleBtn = document.getElementById('explorer-toggle-hidden');
+        toggleBtn?.addEventListener('click', () => {
+            this._showHidden = !this._showHidden;
+            toggleBtn.classList.toggle('active', this._showHidden);
+            toggleBtn.title = this._showHidden ? 'Ocultar archivos ocultos' : 'Mostrar archivos ocultos';
+            if (this.currentPath) {
+                const tree = document.getElementById('file-tree');
+                if (tree) this._loadTree(this.currentPath, tree, 0);
+            }
+        });
+    },
+
     /** Load directory contents and append tree items into container */
     async _loadTree(path, container, depth) {
         container.innerHTML = '<div class="file-tree-loading">Cargando...</div>';
 
         try {
-            const res = await fetch('/api/files?path=' + encodeURIComponent(path));
+            const params = new URLSearchParams({
+                path,
+                show_hidden: this._showHidden ? '1' : '0',
+                use_gitignore: this._useGitignore ? '1' : '0',
+            });
+            const res = await fetch('/api/files?' + params);
             if (!res.ok) throw new Error(await res.text());
             const data = await res.json();
 
@@ -285,7 +323,12 @@ const Explorer = {
                     loaded = true;
                     children.innerHTML = '<div class="tree-loading">Cargando...</div>';
                     try {
-                        const res = await fetch('/api/files?path=' + encodeURIComponent(item.path));
+                        const p = new URLSearchParams({
+                            path: item.path,
+                            show_hidden: Explorer._showHidden ? '1' : '0',
+                            use_gitignore: Explorer._useGitignore ? '1' : '0',
+                        });
+                        const res = await fetch('/api/files?' + p);
                         if (!res.ok) throw new Error();
                         const data = await res.json();
                         children.innerHTML = '';
@@ -318,6 +361,54 @@ const Explorer = {
             this._showContextMenu(e.clientX, e.clientY, item.type === 'dir');
         });
 
+        // ── Drag source (tree item → chat or another folder) ──
+        row.draggable = true;
+        row.addEventListener('dragstart', (e) => {
+            e.dataTransfer.effectAllowed = 'copyMove';
+            e.dataTransfer.setData('application/x-explorer-path', item.path);
+            e.dataTransfer.setData('application/x-explorer-type', item.type);
+            e.dataTransfer.setData('application/x-explorer-name', item.name);
+            row.classList.add('dragging');
+        });
+        row.addEventListener('dragend', () => {
+            row.classList.remove('dragging');
+            document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+        });
+
+        // ── Drop target (folders only — move within tree) ──
+        if (item.type === 'dir') {
+            row.addEventListener('dragover', (e) => {
+                // Only accept drags from our own tree items
+                if (!e.dataTransfer.types.includes('application/x-explorer-path')) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+                row.classList.add('drop-target');
+            });
+            row.addEventListener('dragleave', (e) => {
+                if (!row.contains(e.relatedTarget)) row.classList.remove('drop-target');
+            });
+            row.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                row.classList.remove('drop-target');
+                const srcPath = e.dataTransfer.getData('application/x-explorer-path');
+                if (!srcPath || srcPath === item.path) return;
+                try {
+                    const res = await fetch('/api/files/move', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ src_path: srcPath, dst_dir: item.path }),
+                    });
+                    const data = await res.json();
+                    if (!res.ok) throw new Error(data.detail || 'Error');
+                    Utils.showToast(`Movido: ${data.name}`, 'success');
+                    Explorer._refreshCurrentTree();
+                } catch (err) {
+                    Utils.showToast('Error al mover: ' + String(err), 'error');
+                }
+            });
+        }
+
         wrap.appendChild(row);
         wrap.appendChild(children);
         return wrap;
@@ -327,6 +418,102 @@ const Explorer = {
     navigateTo(path) {
         const tree = document.getElementById('file-tree');
         if (tree) this._loadTree(path, tree, 0);
+    },
+
+    // -------------------------------------------------------------------------
+    // Drop zone: OS files → upload to current tree path
+    // -------------------------------------------------------------------------
+
+    _bindOsDropZone() {
+        const tree = document.getElementById('file-tree');
+        if (!tree) return;
+
+        tree.addEventListener('dragover', (e) => {
+            // OS files: dataTransfer.files will be populated
+            if (!e.dataTransfer.types.includes('Files')) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            tree.classList.add('os-drag-over');
+        });
+
+        tree.addEventListener('dragleave', (e) => {
+            if (!tree.contains(e.relatedTarget)) tree.classList.remove('os-drag-over');
+        });
+
+        tree.addEventListener('drop', async (e) => {
+            tree.classList.remove('os-drag-over');
+            // Ignore drops that come from within the tree (handled by folder rows)
+            if (e.dataTransfer.types.includes('application/x-explorer-path')) return;
+            if (!e.dataTransfer.files.length) return;
+            e.preventDefault();
+
+            const uploadDir = this.currentPath;
+            if (!uploadDir) {
+                Utils.showToast('Selecciona un workspace primero', 'error');
+                return;
+            }
+
+            await this._uploadFiles(Array.from(e.dataTransfer.files), uploadDir);
+        });
+    },
+
+    async _uploadFiles(files, dir) {
+        const tree = document.getElementById('file-tree');
+        // Show progress indicator
+        const indicator = document.createElement('div');
+        indicator.className = 'tree-upload-indicator';
+        indicator.innerHTML = `<div class="tree-upload-spinner"></div><span>Subiendo ${files.length} archivo${files.length > 1 ? 's' : ''}…</span>`;
+        if (tree) { tree.style.position = 'relative'; tree.appendChild(indicator); }
+
+        try {
+            const form = new FormData();
+            files.forEach(f => form.append('files', f));
+            const res = await fetch('/api/files/upload?dir=' + encodeURIComponent(dir), {
+                method: 'POST',
+                body: form,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error al subir');
+            const names = data.uploaded.map(u => u.name).join(', ');
+            Utils.showToast(`Subido${data.uploaded.length > 1 ? 's' : ''}: ${names}`, 'success');
+            this._refreshCurrentTree();
+        } catch (err) {
+            Utils.showToast('Error al subir: ' + String(err), 'error');
+        } finally {
+            indicator.remove();
+        }
+    },
+
+    // -------------------------------------------------------------------------
+    // Drop zone: tree item dragged → chat input (attach)
+    // -------------------------------------------------------------------------
+
+    _bindChatDropZone() {
+        const inputArea = document.querySelector('.input-area');
+        if (!inputArea) return;
+
+        inputArea.addEventListener('dragover', (e) => {
+            if (!e.dataTransfer.types.includes('application/x-explorer-path')) return;
+            const srcType = e.dataTransfer.getData('application/x-explorer-type') || '';
+            // Only allow files (not directories) to be attached
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'copy';
+            inputArea.classList.add('chat-drop-over');
+        });
+
+        inputArea.addEventListener('dragleave', (e) => {
+            if (!inputArea.contains(e.relatedTarget)) inputArea.classList.remove('chat-drop-over');
+        });
+
+        inputArea.addEventListener('drop', async (e) => {
+            inputArea.classList.remove('chat-drop-over');
+            const srcPath = e.dataTransfer.getData('application/x-explorer-path');
+            const srcType = e.dataTransfer.getData('application/x-explorer-type');
+            const srcName = e.dataTransfer.getData('application/x-explorer-name');
+            if (!srcPath || srcType === 'dir') return;
+            e.preventDefault();
+            await Explorer._attachToChat({ path: srcPath, name: srcName, type: 'file' });
+        });
     },
 
     // -------------------------------------------------------------------------
@@ -356,6 +543,7 @@ const Explorer = {
                     workspacePath: path
                 });
                 Utils.showToast('Workspace actualizado: ' + path, 'success');
+                if (window.FileWatcher) FileWatcher.onWorkspaceChange(path);
                 // Navigate tree to new workspace
                 const tree = document.getElementById('file-tree');
                 if (tree) this._loadTree(path, tree, 0);
@@ -389,6 +577,22 @@ const Explorer = {
                 Abrir carpeta en explorador
             </div>
             <div class="context-menu-separator"></div>
+            <div class="context-menu-item" id="ctx-new-file">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
+                    <line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>
+                </svg>
+                Nuevo archivo
+            </div>
+            <div class="context-menu-item" id="ctx-new-folder">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                    <line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/>
+                </svg>
+                Nueva carpeta
+            </div>
+            <div class="context-menu-separator"></div>
             <div class="context-menu-item" id="ctx-copy-path">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -396,11 +600,41 @@ const Explorer = {
                 </svg>
                 Copiar ruta
             </div>
+            <div class="context-menu-item" id="ctx-attach-to-chat">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+                </svg>
+                Adjuntar al chat
+            </div>
             <div class="context-menu-item" id="ctx-mention-in-chat">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
                 </svg>
                 Mencionar en chat
+            </div>
+            <div class="context-menu-separator"></div>
+            <div class="context-menu-item" id="ctx-rename">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                </svg>
+                Renombrar
+            </div>
+            <div class="context-menu-item" id="ctx-duplicate">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
+                    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                </svg>
+                Duplicar
+            </div>
+            <div class="context-menu-item danger" id="ctx-delete">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                </svg>
+                Eliminar
             </div>
         `;
         document.body.appendChild(menu);
@@ -411,14 +645,33 @@ const Explorer = {
         });
 
         document.getElementById('ctx-open-in-tree').addEventListener('click', () => {
-            if (this.contextTarget && this.contextTarget.type === 'dir') {
-                this.navigateTo(this.contextTarget.path);
-            }
+            if (this.contextTarget?.type === 'dir') this.navigateTo(this.contextTarget.path);
             this._hideContextMenu();
+        });
+
+        document.getElementById('ctx-new-file').addEventListener('click', () => {
+            const t = this.contextTarget;
+            this._hideContextMenu();
+            if (!t) return;
+            const dir = t.type === 'dir' ? t.path : t.path.substring(0, t.path.lastIndexOf('/'));
+            ExplorerDialog.prompt('Nuevo archivo', '', 'Crear', (name) => this._crudCreateFile(dir, name));
+        });
+
+        document.getElementById('ctx-new-folder').addEventListener('click', () => {
+            const t = this.contextTarget;
+            this._hideContextMenu();
+            if (!t) return;
+            const dir = t.type === 'dir' ? t.path : t.path.substring(0, t.path.lastIndexOf('/'));
+            ExplorerDialog.prompt('Nueva carpeta', '', 'Crear', (name) => this._crudCreateDir(dir, name));
         });
 
         document.getElementById('ctx-copy-path').addEventListener('click', () => {
             if (this.contextTarget) Utils.copyToClipboard(this.contextTarget.path);
+            this._hideContextMenu();
+        });
+
+        document.getElementById('ctx-attach-to-chat').addEventListener('click', () => {
+            if (this.contextTarget?.type === 'file') this._attachToChat(this.contextTarget);
             this._hideContextMenu();
         });
 
@@ -433,18 +686,38 @@ const Explorer = {
             }
             this._hideContextMenu();
         });
+
+        document.getElementById('ctx-rename').addEventListener('click', () => {
+            const t = this.contextTarget;
+            this._hideContextMenu();
+            if (!t) return;
+            ExplorerDialog.prompt('Renombrar', t.name, 'Renombrar', (newName) => this._crudRename(t.path, newName));
+        });
+
+        document.getElementById('ctx-duplicate').addEventListener('click', () => {
+            if (this.contextTarget) this._crudDuplicate(this.contextTarget.path);
+            this._hideContextMenu();
+        });
+
+        document.getElementById('ctx-delete').addEventListener('click', () => {
+            const t = this.contextTarget;
+            this._hideContextMenu();
+            if (!t) return;
+            const label = t.type === 'dir' ? `la carpeta "${t.name}" y todo su contenido` : `el archivo "${t.name}"`;
+            ExplorerDialog.confirm(`¿Eliminar ${label}?`, 'Eliminar', () => this._crudDelete(t.path));
+        });
     },
 
     _showContextMenu(x, y, isDir) {
         const menu = document.getElementById('explorer-context-menu');
         document.getElementById('ctx-set-workspace').style.display = isDir ? 'flex' : 'none';
         document.getElementById('ctx-open-in-tree').style.display = isDir ? 'flex' : 'none';
+        document.getElementById('ctx-attach-to-chat').style.display = isDir ? 'none' : 'flex';
 
         menu.style.display = 'block';
         menu.style.left = x + 'px';
         menu.style.top = y + 'px';
 
-        // Keep menu inside viewport
         requestAnimationFrame(() => {
             const rect = menu.getBoundingClientRect();
             if (rect.right > window.innerWidth) menu.style.left = (x - rect.width) + 'px';
@@ -456,6 +729,120 @@ const Explorer = {
         const menu = document.getElementById('explorer-context-menu');
         if (menu) menu.style.display = 'none';
         this.contextTarget = null;
+    },
+
+    // -------------------------------------------------------------------------
+    // Attach file to chat
+    // -------------------------------------------------------------------------
+
+    async _attachToChat(item) {
+        if (!window.Chat) {
+            Utils.showToast('Chat no disponible', 'error');
+            return;
+        }
+        try {
+            const res = await fetch('/api/file-content?path=' + encodeURIComponent(item.path));
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error al leer el archivo');
+            const blob = new Blob([data.content], { type: 'text/plain' });
+            const file = new File([blob], item.name, { type: 'text/plain' });
+            await Chat.addFileAttachment(file);
+            Utils.showToast(`Adjuntado: ${item.name}`, 'success');
+        } catch (err) {
+            Utils.showToast('Error al adjuntar: ' + String(err), 'error');
+        }
+    },
+
+    // -------------------------------------------------------------------------
+    // CRUD operations
+    // -------------------------------------------------------------------------
+
+    async _crudCreateFile(dir, name) {
+        if (!name?.trim()) return;
+        const path = dir.replace(/\/$/, '') + '/' + name.trim();
+        try {
+            const res = await fetch('/api/files/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error');
+            Utils.showToast(`Archivo creado: ${data.name}`, 'success');
+            this._refreshCurrentTree();
+        } catch (err) {
+            Utils.showToast('Error: ' + String(err), 'error');
+        }
+    },
+
+    async _crudCreateDir(dir, name) {
+        if (!name?.trim()) return;
+        const path = dir.replace(/\/$/, '') + '/' + name.trim();
+        try {
+            const res = await fetch('/api/files/mkdir', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error');
+            Utils.showToast(`Carpeta creada: ${data.name}`, 'success');
+            this._refreshCurrentTree();
+        } catch (err) {
+            Utils.showToast('Error: ' + String(err), 'error');
+        }
+    },
+
+    async _crudRename(path, newName) {
+        if (!newName?.trim()) return;
+        try {
+            const res = await fetch('/api/files/rename', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path, new_name: newName.trim() }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error');
+            Utils.showToast(`Renombrado a: ${data.name}`, 'success');
+            this._refreshCurrentTree();
+        } catch (err) {
+            Utils.showToast('Error: ' + String(err), 'error');
+        }
+    },
+
+    async _crudDelete(path) {
+        try {
+            const res = await fetch('/api/files/delete?path=' + encodeURIComponent(path), {
+                method: 'DELETE',
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error');
+            Utils.showToast('Eliminado', 'success');
+            this._refreshCurrentTree();
+        } catch (err) {
+            Utils.showToast('Error: ' + String(err), 'error');
+        }
+    },
+
+    async _crudDuplicate(path) {
+        try {
+            const res = await fetch('/api/files/duplicate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ path }),
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error');
+            Utils.showToast(`Duplicado como: ${data.name}`, 'success');
+            this._refreshCurrentTree();
+        } catch (err) {
+            Utils.showToast('Error: ' + String(err), 'error');
+        }
+    },
+
+    _refreshCurrentTree() {
+        const tree = document.getElementById('file-tree');
+        if (tree && this.currentPath) this._loadTree(this.currentPath, tree, 0);
     },
 
     _bindGlobalClose() {
@@ -497,6 +884,84 @@ const Explorer = {
 };
 
 window.Explorer = Explorer;
+
+// =============================================================================
+// Explorer Dialog  (prompt / confirm)
+// =============================================================================
+
+const ExplorerDialog = {
+    _resolve: null,
+
+    init() {
+        this._overlay = document.getElementById('explorer-dialog-overlay');
+        this._titleEl = document.getElementById('explorer-dialog-title');
+        this._inputEl = document.getElementById('explorer-dialog-input');
+        this._confirmBtn = document.getElementById('explorer-dialog-confirm');
+        this._cancelBtn = document.getElementById('explorer-dialog-cancel');
+
+        if (!this._overlay) return;
+
+        this._cancelBtn.addEventListener('click', () => this._close(null));
+        this._confirmBtn.addEventListener('click', () => this._submit());
+        this._inputEl.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') { e.preventDefault(); this._submit(); }
+            if (e.key === 'Escape') this._close(null);
+        });
+        this._overlay.addEventListener('click', (e) => {
+            if (e.target === this._overlay) this._close(null);
+        });
+    },
+
+    // Show input dialog. Calls cb(value) on confirm.
+    prompt(title, defaultVal, confirmLabel, cb) {
+        this._cb = cb;
+        this._mode = 'prompt';
+        this._titleEl.textContent = title;
+        this._inputEl.value = defaultVal || '';
+        this._inputEl.style.display = '';
+        this._confirmBtn.textContent = confirmLabel || 'Aceptar';
+        this._confirmBtn.classList.remove('danger');
+        this._overlay.hidden = false;
+        requestAnimationFrame(() => {
+            this._inputEl.focus();
+            this._inputEl.select();
+        });
+    },
+
+    // Show confirmation dialog (no input). Calls cb() on confirm.
+    confirm(title, confirmLabel, cb) {
+        this._cb = cb;
+        this._mode = 'confirm';
+        this._titleEl.textContent = title;
+        this._inputEl.style.display = 'none';
+        this._confirmBtn.textContent = confirmLabel || 'Confirmar';
+        this._confirmBtn.classList.add('danger');
+        this._overlay.hidden = false;
+        requestAnimationFrame(() => this._confirmBtn.focus());
+    },
+
+    _submit() {
+        if (this._mode === 'prompt') {
+            const val = this._inputEl.value.trim();
+            if (!val) return;
+            this._close(val);
+        } else {
+            this._close(true);
+        }
+    },
+
+    _close(result) {
+        this._overlay.hidden = true;
+        this._inputEl.style.display = '';
+        this._confirmBtn.classList.remove('danger');
+        if (result !== null && result !== undefined && this._cb) {
+            this._cb(result);
+        }
+        this._cb = null;
+    },
+};
+
+window.ExplorerDialog = ExplorerDialog;
 
 // =============================================================================
 // File Viewer
@@ -908,3 +1373,56 @@ const SearchPanel = {
 };
 
 window.SearchPanel = SearchPanel;
+
+// =============================================================================
+// File Watcher  (WebSocket-based auto-refresh)
+// =============================================================================
+
+const FileWatcher = {
+    _watchPath: null,
+    _refreshTimer: null,
+    _DEBOUNCE_MS: 800,
+
+    init() {
+        if (!window.wsManager) return;
+
+        // Listen for file_changed events pushed by the server
+        wsManager.on('file_changed', (payload) => {
+            this._scheduleRefresh();
+        });
+
+        // When workspace changes in Explorer, tell the server to watch the new path
+        wsManager.on('connected', () => {
+            if (Explorer.workspacePath) this._startWatch(Explorer.workspacePath);
+        });
+    },
+
+    // Called by Explorer._setWorkspace after the workspace changes
+    onWorkspaceChange(path) {
+        this._watchPath = path;
+        this._startWatch(path);
+    },
+
+    _startWatch(path) {
+        if (!path) return;
+        this._watchPath = path;
+        wsManager.send({ type: 'watch', path });
+    },
+
+    _scheduleRefresh() {
+        clearTimeout(this._refreshTimer);
+        this._refreshTimer = setTimeout(() => {
+            // Refresh the file tree root without destroying open subtrees
+            const tree = document.getElementById('file-tree');
+            if (tree && Explorer.currentPath) {
+                Explorer._loadTree(Explorer.currentPath, tree, 0);
+            }
+            // Also re-run any active search
+            if (SearchPanel._input?.value.trim()) {
+                SearchPanel._search();
+            }
+        }, this._DEBOUNCE_MS);
+    },
+};
+
+window.FileWatcher = FileWatcher;

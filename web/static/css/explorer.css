@@ -384,6 +384,64 @@
 }
 
 /* =============================================================================
+   Drag & Drop
+   ============================================================================= */
+
+/* Tree item being dragged */
+.tree-item-row.dragging {
+    opacity: 0.4;
+}
+
+/* Folder that is a valid drop target (move within tree) */
+.tree-item-row.drop-target {
+    background: var(--accent-primary-bg);
+    outline: 1px dashed var(--accent-primary);
+    outline-offset: -1px;
+}
+
+/* File-tree drop zone when OS files are dragged over */
+.file-tree.os-drag-over {
+    background: var(--accent-primary-bg);
+    outline: 2px dashed var(--accent-primary);
+    outline-offset: -4px;
+}
+
+/* Upload progress overlay inside file-tree */
+.tree-upload-indicator {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--bg-elevated);
+    border-top: 1px solid var(--border-primary);
+    padding: 6px 12px;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    z-index: 10;
+}
+
+.tree-upload-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border-primary);
+    border-top-color: var(--accent-primary);
+    border-radius: 50%;
+    animation: fv-spin 0.7s linear infinite;
+    flex-shrink: 0;
+}
+
+/* Chat input area becomes a drop target for tree items */
+#chat-input-area.chat-drop-over,
+.chat-input-wrapper.chat-drop-over {
+    outline: 2px dashed var(--accent-primary);
+    outline-offset: -2px;
+    background: var(--accent-primary-bg);
+}
+
+/* =============================================================================
    Context Menu
    ============================================================================= */
 
@@ -680,6 +738,110 @@
 }
 
 /* =============================================================================
+   Explorer action button — active state (toggle hidden)
+   ============================================================================= */
+
+.explorer-action-btn.active {
+    color: var(--accent-primary);
+    background: var(--accent-primary-bg);
+}
+
+/* =============================================================================
+   Explorer inline dialog (rename / new file / new folder / confirm delete)
+   ============================================================================= */
+
+.explorer-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1600;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    -webkit-backdrop-filter: blur(2px);
+    backdrop-filter: blur(2px);
+}
+
+.explorer-dialog-overlay[hidden] {
+    display: none;
+}
+
+.explorer-dialog {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-secondary);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
+    padding: 20px 24px;
+    width: min(90vw, 400px);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.explorer-dialog-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.explorer-dialog-input {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-md);
+    padding: 7px 10px;
+    color: var(--text-primary);
+    font-size: var(--text-sm);
+    font-family: var(--font-mono);
+    outline: none;
+    transition: border-color var(--transition-fast);
+}
+
+.explorer-dialog-input:focus {
+    border-color: var(--accent-primary);
+}
+
+.explorer-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+.explorer-dialog-btn {
+    padding: 6px 14px;
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    border: 1px solid var(--border-primary);
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.explorer-dialog-cancel {
+    background: transparent;
+    color: var(--text-secondary);
+}
+
+.explorer-dialog-cancel:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.explorer-dialog-confirm {
+    background: var(--accent-primary);
+    color: #fff;
+    border-color: var(--accent-primary);
+}
+
+.explorer-dialog-confirm:hover {
+    opacity: 0.85;
+}
+
+.explorer-dialog-confirm.danger {
+    background: var(--accent-danger);
+    border-color: var(--accent-danger);
+}
+
+/* =============================================================================
    Quick Open Modal (Ctrl+P)
    ============================================================================= */
 
@@ -692,6 +854,7 @@
     align-items: flex-start;
     justify-content: center;
     padding-top: 80px;
+    -webkit-backdrop-filter: blur(2px);
     backdrop-filter: blur(2px);
 }
 
@@ -916,6 +1079,7 @@
     gap: 6px;
     padding: 5px var(--space-md);
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
     position: sticky;
     top: 0;
@@ -998,6 +1162,7 @@
     flex-shrink: 0;
     min-width: 32px;
     text-align: right;
+    -webkit-user-select: none;
     user-select: none;
 }
 

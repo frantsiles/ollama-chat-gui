@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File as FastAPIFile
 from pydantic import BaseModel
 
 from config import ApprovalLevel, OLLAMA_BASE_URL, OperationMode
@@ -237,8 +237,32 @@ async def get_current_plan(session_id: str) -> Dict[str, Any]:
 # File Explorer
 # =============================================================================
 
+def _load_gitignore_patterns(directory: Path) -> list[str]:
+    """Return gitignore patterns found in directory (simple glob patterns only)."""
+    gi = directory / ".gitignore"
+    patterns: list[str] = []
+    if gi.is_file():
+        try:
+            for line in gi.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    patterns.append(line.rstrip("/"))
+        except OSError:
+            pass
+    return patterns
+
+
+def _matches_gitignore(name: str, patterns: list[str]) -> bool:
+    import fnmatch
+    return any(fnmatch.fnmatch(name, p) for p in patterns)
+
+
 @router.get("/files")
-async def list_files(path: str = "") -> Dict[str, Any]:
+async def list_files(
+    path: str = "",
+    show_hidden: bool = False,
+    use_gitignore: bool = True,
+) -> Dict[str, Any]:
     """Lista el contenido de un directorio para el explorador de archivos."""
 
     if not path:
@@ -254,10 +278,17 @@ async def list_files(path: str = "") -> Dict[str, Any]:
     if not target.is_dir():
         raise HTTPException(status_code=400, detail="La ruta no es un directorio")
 
+    gi_patterns = _load_gitignore_patterns(target) if use_gitignore else []
+
     items = []
     try:
         for entry in sorted(target.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
             try:
+                is_hidden = entry.name.startswith(".")
+                if is_hidden and not show_hidden:
+                    continue
+                if use_gitignore and _matches_gitignore(entry.name, gi_patterns):
+                    continue
                 is_dir = entry.is_dir(follow_symlinks=False)
                 stat = entry.stat(follow_symlinks=False)
                 items.append({
@@ -265,7 +296,7 @@ async def list_files(path: str = "") -> Dict[str, Any]:
                     "path": str(entry),
                     "type": "dir" if is_dir else "file",
                     "size": stat.st_size if not is_dir else None,
-                    "hidden": entry.name.startswith("."),
+                    "hidden": is_hidden,
                 })
             except PermissionError:
                 pass
@@ -279,6 +310,207 @@ async def list_files(path: str = "") -> Dict[str, Any]:
         "parent": parent,
         "items": items,
     }
+
+
+# =============================================================================
+# File CRUD
+# =============================================================================
+
+class FileCreateBody(BaseModel):
+    path: str
+    content: str = ""
+
+class DirCreateBody(BaseModel):
+    path: str
+
+class RenameBody(BaseModel):
+    path: str
+    new_name: str
+
+class DeleteBody(BaseModel):
+    path: str
+
+class DuplicateBody(BaseModel):
+    path: str
+
+
+@router.post("/files/create")
+async def create_file(body: FileCreateBody) -> Dict[str, Any]:
+    """Crea un nuevo archivo de texto."""
+    try:
+        target = Path(body.path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if target.exists():
+        raise HTTPException(status_code=409, detail="El archivo ya existe")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body.content, encoding="utf-8")
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+    return {"path": str(target), "name": target.name}
+
+
+@router.post("/files/mkdir")
+async def create_dir(body: DirCreateBody) -> Dict[str, Any]:
+    """Crea un nuevo directorio."""
+    try:
+        target = Path(body.path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if target.exists():
+        raise HTTPException(status_code=409, detail="El directorio ya existe")
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+    return {"path": str(target), "name": target.name}
+
+
+@router.post("/files/rename")
+async def rename_entry(body: RenameBody) -> Dict[str, Any]:
+    """Renombra un archivo o directorio."""
+    try:
+        src = Path(body.path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="No encontrado")
+    if "/" in body.new_name or "\\" in body.new_name:
+        raise HTTPException(status_code=400, detail="El nombre no puede contener separadores de ruta")
+    dst = src.parent / body.new_name
+    if dst.exists():
+        raise HTTPException(status_code=409, detail="Ya existe un archivo con ese nombre")
+    try:
+        src.rename(dst)
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+    return {"old_path": str(src), "new_path": str(dst), "name": dst.name}
+
+
+@router.delete("/files/delete")
+async def delete_entry(path: str) -> Dict[str, Any]:
+    """Elimina un archivo o directorio (recursivo)."""
+    try:
+        target = Path(path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="No encontrado")
+    try:
+        import shutil
+        if target.is_dir():
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+    return {"deleted": str(target)}
+
+
+@router.post("/files/duplicate")
+async def duplicate_entry(body: DuplicateBody) -> Dict[str, Any]:
+    """Duplica un archivo o directorio con sufijo '_copia'."""
+    try:
+        src = Path(body.path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="No encontrado")
+
+    import shutil
+    # Build a non-colliding name: name_copia, name_copia2, ...
+    if src.is_dir():
+        base = src.name + "_copia"
+        dst = src.parent / base
+        counter = 2
+        while dst.exists():
+            dst = src.parent / f"{base}{counter}"
+            counter += 1
+        try:
+            shutil.copytree(src, dst)
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Permiso denegado")
+    else:
+        stem = src.stem + "_copia"
+        suffix = src.suffix
+        dst = src.parent / (stem + suffix)
+        counter = 2
+        while dst.exists():
+            dst = src.parent / f"{stem}{counter}{suffix}"
+            counter += 1
+        try:
+            shutil.copy2(src, dst)
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Permiso denegado")
+
+    return {"original": str(src), "copy": str(dst), "name": dst.name}
+
+
+class MoveBody(BaseModel):
+    src_path: str
+    dst_dir: str   # destination directory (not full path)
+
+
+@router.post("/files/move")
+async def move_entry(body: MoveBody) -> Dict[str, Any]:
+    """Mueve un archivo o directorio a otro directorio."""
+    try:
+        src = Path(body.src_path).expanduser().resolve()
+        dst_dir = Path(body.dst_dir).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if not src.exists():
+        raise HTTPException(status_code=404, detail="Origen no encontrado")
+    if not dst_dir.is_dir():
+        raise HTTPException(status_code=400, detail="El destino no es un directorio")
+    dst = dst_dir / src.name
+    if dst.exists():
+        raise HTTPException(status_code=409, detail=f"Ya existe '{src.name}' en el destino")
+    try:
+        import shutil
+        shutil.move(str(src), str(dst))
+    except PermissionError:
+        raise HTTPException(status_code=403, detail="Permiso denegado")
+    return {"src": str(src), "dst": str(dst), "name": dst.name}
+
+
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB per file
+
+
+@router.post("/files/upload")
+async def upload_files(
+    dir: str,
+    files: list[UploadFile] = FastAPIFile(...),
+) -> Dict[str, Any]:
+    """Sube uno o más archivos a un directorio del workspace."""
+    try:
+        target_dir = Path(dir).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+    if not target_dir.is_dir():
+        raise HTTPException(status_code=400, detail="El directorio no existe")
+
+    saved = []
+    for uf in files:
+        name = Path(uf.filename or "upload").name  # strip any path traversal
+        dest = target_dir / name
+        # avoid collisions
+        counter = 1
+        stem, suffix = dest.stem, dest.suffix
+        while dest.exists():
+            dest = target_dir / f"{stem}_{counter}{suffix}"
+            counter += 1
+        data = await uf.read()
+        if len(data) > MAX_UPLOAD_SIZE:
+            raise HTTPException(status_code=413, detail=f"{name}: archivo demasiado grande (max 50 MB)")
+        try:
+            dest.write_bytes(data)
+        except PermissionError:
+            raise HTTPException(status_code=403, detail=f"Permiso denegado: {name}")
+        saved.append({"name": dest.name, "path": str(dest), "size": len(data)})
+
+    return {"uploaded": saved}
 
 
 # =============================================================================

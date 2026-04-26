@@ -43,6 +43,7 @@ const App = {
         this.safeInitModule('FileViewer', window.FileViewer);
         this.safeInitModule('QuickOpen', window.QuickOpen);
         this.safeInitModule('SearchPanel', window.SearchPanel);
+        this.safeInitModule('FileWatcher', window.FileWatcher);
         this.safeInitModule('Sidebar', window.Sidebar);
         this.safeInitModule('Plan', window.Plan);
         this.safeInitModule('Modes', window.Modes);

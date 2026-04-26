@@ -718,40 +718,107 @@ async def handle_stream_chat(
         })
 
 
+# =============================================================================
+# File Watcher (watchfiles-based, one task per WS session)
+# =============================================================================
+
+_WATCH_IGNORE = frozenset({
+    '.git', 'node_modules', '__pycache__', '.venv', 'venv',
+    '.mypy_cache', '.pytest_cache', 'dist', 'build', '.next',
+})
+
+async def _file_watcher_task(websocket: WebSocket, watch_path: str, stop_event: asyncio.Event) -> None:
+    """Watch *watch_path* and push file_changed events over *websocket*."""
+    try:
+        from watchfiles import awatch, Change
+    except ImportError:
+        logger.warning("watchfiles not installed — file watcher disabled")
+        return
+
+    root = Path(watch_path)
+    logger.info(f"👁  Starting file watcher on: {root}")
+
+    def _ignore(raw_path: str) -> bool:
+        p = Path(raw_path)
+        return any(part in _WATCH_IGNORE for part in p.parts)
+
+    try:
+        async for changes in awatch(str(root), stop_event=stop_event):
+            batch: list[dict] = []
+            for change, raw_path in changes:
+                if _ignore(raw_path):
+                    continue
+                try:
+                    rel = str(Path(raw_path).relative_to(root))
+                except ValueError:
+                    rel = raw_path
+                batch.append({
+                    "change": change.name.lower(),   # created | modified | deleted
+                    "path": raw_path,
+                    "rel_path": rel,
+                })
+            if batch:
+                try:
+                    await websocket.send_json({"type": "file_changed", "changes": batch})
+                except Exception:
+                    break  # socket closed
+    except Exception as e:
+        logger.debug(f"File watcher stopped: {e}")
+
+    logger.info(f"👁  File watcher stopped for: {root}")
+
+
 async def websocket_handler(websocket: WebSocket, session_id: str):
     """Handler principal de WebSocket."""
     logger.info(f"🔌 New WebSocket connection request: {session_id}")
-    
-    # Obtener o crear sesión
+
     session = SessionManager.get_or_create(session_id)
     logger.info(f"✅ Session created/retrieved: {session_id}")
-    
+
     await manager.connect(websocket, session_id)
     logger.info(f"✅ WebSocket accepted: {session_id}")
-    
-    # Enviar estado inicial
+
     await websocket.send_json({
         "type": "connected",
         "session": session.to_dict(),
         "messages": session.get_messages_for_display(),
     })
     logger.info(f"📤 Sent initial state to: {session_id}")
-    
+
+    # File watcher state
+    watcher_task: asyncio.Task | None = None
+    watcher_stop = asyncio.Event()
+    current_watch_path: str | None = None
+
+    def _restart_watcher(path: str | None) -> None:
+        nonlocal watcher_task, watcher_stop, current_watch_path
+        if watcher_task and not watcher_task.done():
+            watcher_stop.set()
+            watcher_task.cancel()
+        watcher_task = None
+        watcher_stop = asyncio.Event()
+        current_watch_path = path
+        if path and Path(path).is_dir():
+            watcher_task = asyncio.create_task(
+                _file_watcher_task(websocket, path, watcher_stop)
+            )
+
+    # Start watcher immediately if session already has a workspace
+    if session.workspace_root:
+        _restart_watcher(session.workspace_root)
+
     try:
         while True:
             raw_data = await websocket.receive_text()
-            
+
             try:
                 data = json.loads(raw_data)
             except json.JSONDecodeError:
-                await websocket.send_json({
-                    "type": "error",
-                    "message": "Invalid JSON",
-                })
+                await websocket.send_json({"type": "error", "message": "Invalid JSON"})
                 continue
-            
+
             msg_type = data.get("type", "")
-            
+
             if msg_type == "chat":
                 await handle_chat_message(websocket, session, data)
             elif msg_type == "stream_chat":
@@ -764,15 +831,24 @@ async def websocket_handler(websocket: WebSocket, session_id: str):
                 await handle_cancel(websocket, session, data)
             elif msg_type == "ping":
                 await websocket.send_json({"type": "pong"})
+            elif msg_type == "watch":
+                # Client sends {"type":"watch","path":"..."} to (re)start the watcher
+                new_path = data.get("path") or session.workspace_root
+                if new_path != current_watch_path:
+                    _restart_watcher(new_path)
+                await websocket.send_json({"type": "watch_ack", "path": new_path})
             else:
                 await websocket.send_json({
                     "type": "error",
                     "message": f"Unknown message type: {msg_type}",
                 })
-    
+
     except WebSocketDisconnect:
         logger.info(f"🔴 WebSocket disconnected: {session_id}")
-        manager.disconnect(session_id)
     except Exception as e:
         logger.error(f"❌ WebSocket error for {session_id}: {e}")
+    finally:
+        watcher_stop.set()
+        if watcher_task and not watcher_task.done():
+            watcher_task.cancel()
         manager.disconnect(session_id)
