@@ -24,6 +24,9 @@ const Sidebar = {
         this.agentTaskTimeout  = document.getElementById('agent-task-timeout');
         this.timeoutValue      = document.getElementById('timeout-value');
         this.traceList         = document.getElementById('trace-list');
+        this.systemPromptInput = document.getElementById('system-prompt-input');
+        this.systemPromptChars = document.getElementById('system-prompt-chars');
+        this.systemPromptSave  = document.getElementById('system-prompt-save');
 
         this.bindEvents();
         this.loadSettings();
@@ -48,11 +51,17 @@ const Sidebar = {
             .then(r => r.json())
             .then(data => {
                 const ws = data.workspace_root || savedWs();
-                if (ws && window.Explorer) {
-                    Explorer.setWorkspace(ws);
-                }
+                if (ws && window.Explorer) Explorer.setWorkspace(ws);
                 if (ws && this.workspacePath) {
                     this.workspacePath.textContent = Utils.truncatePath(ws, 40);
+                }
+                // Restore system prompt from server (takes precedence over localStorage)
+                if (data.system_prompt !== undefined && this.systemPromptInput) {
+                    this.systemPromptInput.value = data.system_prompt;
+                    if (this.systemPromptChars) {
+                        this.systemPromptChars.textContent =
+                            `${data.system_prompt.length} / 4000`;
+                    }
                 }
             })
             .catch(() => {
@@ -107,6 +116,24 @@ const Sidebar = {
             this.updateConfig({ agent_task_timeout: val });
             this._saveSettings({ agentTaskTimeout: val });
         });
+
+        // System prompt
+        if (this.systemPromptInput) {
+            this.systemPromptInput.addEventListener('input', () => {
+                const len = this.systemPromptInput.value.length;
+                if (this.systemPromptChars) {
+                    this.systemPromptChars.textContent = `${len} / 4000`;
+                }
+            });
+        }
+        if (this.systemPromptSave) {
+            this.systemPromptSave.addEventListener('click', () => {
+                const val = (this.systemPromptInput?.value || '').trim();
+                this.updateConfig({ system_prompt: val });
+                this._saveSettings({ systemPrompt: val });
+                Utils.showToast('Instrucciones guardadas', 'success');
+            });
+        }
 
         // Change workspace button (manual path input)
         document.getElementById('change-workspace').addEventListener('click', () => {
@@ -212,6 +239,12 @@ const Sidebar = {
         }
         if (settings.workspacePath) {
             this.workspacePath.textContent = Utils.truncatePath(settings.workspacePath, 40);
+        }
+        if (settings.systemPrompt !== undefined && this.systemPromptInput) {
+            this.systemPromptInput.value = settings.systemPrompt;
+            if (this.systemPromptChars) {
+                this.systemPromptChars.textContent = `${settings.systemPrompt.length} / 4000`;
+            }
         }
     },
 

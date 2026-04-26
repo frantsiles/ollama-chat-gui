@@ -32,6 +32,7 @@ class ConfigUpdate(BaseModel):
     approval_level: Optional[str] = None
     max_agent_steps: Optional[int] = None
     agent_task_timeout: Optional[int] = None
+    system_prompt: Optional[str] = None
 
 
 class SessionCreate(BaseModel):
@@ -154,6 +155,7 @@ async def get_config(session_id: str) -> Dict[str, Any]:
         "approval_level": session.approval_level,
         "max_agent_steps": session.max_agent_steps,
         "agent_task_timeout": session.agent_task_timeout,
+        "system_prompt": session.system_prompt,
         "modes": [OperationMode.CHAT, OperationMode.AGENT, OperationMode.PLAN],
         "approval_levels": [ApprovalLevel.NONE, ApprovalLevel.WRITE_ONLY, ApprovalLevel.ALL],
     }
@@ -185,6 +187,8 @@ async def update_config(session_id: str, data: ConfigUpdate) -> Dict[str, Any]:
         session.max_agent_steps = max(1, min(500, data.max_agent_steps))
     if data.agent_task_timeout is not None:
         session.agent_task_timeout = max(30, min(3600, data.agent_task_timeout))
+    if data.system_prompt is not None:
+        session.system_prompt = data.system_prompt[:4000]  # razonable upper bound
 
     return {"config": session.to_dict()}
 

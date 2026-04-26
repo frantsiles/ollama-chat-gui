@@ -212,6 +212,29 @@
                             </div>
                         </div>
 
+                        <!-- System Prompt -->
+                        <div class="panel-section">
+                            <div class="panel-section-header" data-target="cfg-sysprompt">
+                                <span>Instrucciones del sistema</span>
+                                <svg class="panel-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                            <div class="panel-section-body" id="cfg-sysprompt">
+                                <textarea
+                                    id="system-prompt-input"
+                                    class="system-prompt-textarea"
+                                    placeholder="Instrucciones adicionales para el modelo (rol, estilo, restricciones…)"
+                                    rows="5"
+                                    maxlength="4000"
+                                ></textarea>
+                                <div class="system-prompt-footer">
+                                    <span id="system-prompt-chars" class="system-prompt-chars">0 / 4000</span>
+                                    <button type="button" id="system-prompt-save" class="btn btn-primary btn-sm">Guardar</button>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Max Agent Steps + Timeout -->
                         <div class="panel-section">
                             <div class="panel-section-header" data-target="cfg-steps">

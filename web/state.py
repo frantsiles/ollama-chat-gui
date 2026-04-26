@@ -33,6 +33,7 @@ class Session:
     approval_level: str = ApprovalLevel.WRITE_ONLY
     max_agent_steps: int = MAX_AGENT_STEPS
     agent_task_timeout: int = AGENT_TASK_TIMEOUT
+    system_prompt: str = ""
     pending_approval: Optional[Dict[str, Any]] = None
     current_plan: Optional[Dict[str, Any]] = None
     agent_trace: List[str] = field(default_factory=list)
@@ -52,6 +53,7 @@ class Session:
             "approval_level": self.approval_level,
             "max_agent_steps": self.max_agent_steps,
             "agent_task_timeout": self.agent_task_timeout,
+            "system_prompt": self.system_prompt,
             "pending_approval": self.pending_approval,
             "current_plan": self.current_plan,
             "agent_trace": self.agent_trace,
@@ -158,6 +160,7 @@ class SessionManager:
             "approval_level": session.approval_level,
             "max_agent_steps": session.max_agent_steps,
             "agent_task_timeout": session.agent_task_timeout,
+            "system_prompt": session.system_prompt,
             "context_summary": session.context_summary,
             "pending_approval": session.pending_approval,
             "current_plan": session.current_plan,
@@ -215,6 +218,7 @@ class SessionManager:
             approval_level=meta.get("approval_level", ApprovalLevel.WRITE_ONLY),
             max_agent_steps=int(meta.get("max_agent_steps", MAX_AGENT_STEPS)),
             agent_task_timeout=int(meta.get("agent_task_timeout", AGENT_TASK_TIMEOUT)),
+            system_prompt=meta.get("system_prompt", ""),
             context_summary=meta.get("context_summary", ""),
             pending_approval=meta.get("pending_approval"),
             current_plan=meta.get("current_plan"),

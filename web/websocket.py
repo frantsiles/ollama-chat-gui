@@ -176,6 +176,7 @@ async def handle_chat_message(
         agent.approval_manager.set_level(session.approval_level)
         agent._context_summary = session.context_summary
         agent._max_agent_steps = session.max_agent_steps
+        agent._custom_instructions = session.system_prompt
 
         # --- Memoria a largo plazo ---
         memory_store = None

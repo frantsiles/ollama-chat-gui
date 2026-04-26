@@ -94,6 +94,8 @@ class Agent:
         self._memory_store: Optional[Any] = None
         # Límite de pasos por sesión (sobreescribe MAX_AGENT_STEPS del config)
         self._max_agent_steps: Optional[int] = None
+        # Instrucciones personalizadas del usuario (añadidas al system prompt)
+        self._custom_instructions: str = ""
         # Acumulador de tokens para la sesión actual
         self._token_usage: Dict[str, int] = {
             "prompt_tokens": 0,
@@ -438,9 +440,16 @@ class Agent:
             images=images or [],
         )
         
-        # Llamar al modelo
-        messages = self._build_messages(conversation)
-        
+        # Llamar al modelo (con instrucciones personalizadas si las hay)
+        if self._custom_instructions:
+            from llm.prompts import PromptManager as _PM
+            _sp = _PM.get_system_prompt_with_memory(
+                self.mode, self._memory_context, self._custom_instructions
+            )
+            messages = self._build_messages(conversation, system_prompt=_sp)
+        else:
+            messages = self._build_messages(conversation)
+
         try:
             response = self._call_model(messages)
         except OllamaClientError as e:
@@ -571,6 +580,8 @@ class Agent:
         self._context_builder.set_cwd(self.current_cwd)
         workspace_ctx = self._context_builder.build_workspace_snapshot()
         full_system_prompt = f"{NATURAL_AGENT_SYSTEM_PROMPT}\n{workspace_ctx}"
+        if self._custom_instructions:
+            full_system_prompt += f"\n\nInstrucciones del usuario:\n{self._custom_instructions}"
 
         loop = NaturalConversationLoop(
             llm_call=lambda msgs, fmt: self._call_model(msgs, fmt=fmt),

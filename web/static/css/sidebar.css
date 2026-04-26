@@ -123,6 +123,42 @@
 }
 
 /* =============================================================================
+   System Prompt Editor
+   ============================================================================= */
+
+.system-prompt-textarea {
+    width: 100%;
+    padding: 6px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-family: var(--font-mono);
+    resize: vertical;
+    min-height: 80px;
+    line-height: 1.5;
+    box-sizing: border-box;
+}
+
+.system-prompt-textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+}
+
+.system-prompt-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 6px;
+}
+
+.system-prompt-chars {
+    font-size: 0.72rem;
+    color: var(--text-tertiary);
+}
+
+/* =============================================================================
    Context Panel
    ============================================================================= */
 

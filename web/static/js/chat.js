@@ -209,6 +209,12 @@ const Chat = {
             Plan.showPlan(data.plan);
         });
 
+        wsManager.on('rag_suggestion', (data) => {
+            if (data.suggestions && data.suggestions.length > 0) {
+                this._showRagSuggestions(data.suggestions);
+            }
+        });
+
         wsManager.on('connectionChange', (status) => {
             if (status === 'disconnected' && this.isProcessing) {
                 this.isProcessing = false;
@@ -335,7 +341,52 @@ const Chat = {
         }
 
         this.messagesEl.appendChild(messageEl);
+
+        // Syntax highlighting + copy buttons for every code block in this message.
+        this._enhanceCodeBlocks(messageEl);
+
         this.scrollToBottom();
+    },
+
+    /**
+     * Apply highlight.js and inject copy buttons into every <pre><code> block
+     * found inside a rendered message element.
+     */
+    _enhanceCodeBlocks(messageEl) {
+        messageEl.querySelectorAll('pre code').forEach(codeEl => {
+            if (window.hljs) hljs.highlightElement(codeEl);
+
+            const pre = codeEl.parentElement;
+            if (pre.querySelector('.code-copy-btn')) return; // already done
+
+            const btn = document.createElement('button');
+            btn.className = 'code-copy-btn';
+            btn.title = 'Copiar código';
+            btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2"/>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+            </svg>`;
+            btn.addEventListener('click', async () => {
+                const text = codeEl.textContent || '';
+                try {
+                    await navigator.clipboard.writeText(text);
+                    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                        stroke="currentColor" stroke-width="2">
+                        <polyline points="20 6 9 17 4 12"/>
+                    </svg>`;
+                    setTimeout(() => {
+                        btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                            stroke="currentColor" stroke-width="2">
+                            <rect x="9" y="9" width="13" height="13" rx="2"/>
+                            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
+                        </svg>`;
+                    }, 1500);
+                } catch (_) { /* clipboard access denied */ }
+            });
+            pre.style.position = 'relative';
+            pre.appendChild(btn);
+        });
     },
 
     /**
@@ -375,6 +426,48 @@ const Chat = {
             strip.appendChild(chip);
         }
         return strip;
+    },
+
+    /**
+     * Show RAG file suggestions below the last assistant message.
+     * Replaces any previous suggestion strip so they don't pile up.
+     */
+    _showRagSuggestions(suggestions) {
+        // Remove any previous strip
+        this.messagesEl.querySelectorAll('.rag-suggestions').forEach(el => el.remove());
+
+        const strip = document.createElement('div');
+        strip.className = 'rag-suggestions';
+
+        const label = document.createElement('span');
+        label.className = 'rag-suggestions-label';
+        label.textContent = '📂 Archivos relevantes:';
+        strip.appendChild(label);
+
+        for (const s of suggestions.slice(0, 5)) {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'rag-chip';
+            chip.title = s.reason || s.snippet || '';
+            chip.textContent = s.path.split('/').pop(); // show only filename
+            chip.addEventListener('click', () => {
+                // Insert a reference to the file into the input
+                const ref = `\`${s.path}\``;
+                const input = document.getElementById('message-input');
+                if (input) {
+                    const pos = input.selectionStart;
+                    input.value = input.value.slice(0, pos) + ref + input.value.slice(pos);
+                    input.focus();
+                    Utils.autoResizeTextarea(input);
+                    if (window.Chat) Chat.updateSendButton();
+                }
+                chip.classList.add('rag-chip-used');
+            });
+            strip.appendChild(chip);
+        }
+
+        this.messagesEl.appendChild(strip);
+        this.scrollToBottom();
     },
 
     _parseLeanAttachment(name) {
@@ -505,6 +598,7 @@ const Chat = {
             bodyEl.innerHTML = Utils.parseMarkdown(finalContent);
         }
 
+        this._enhanceCodeBlocks(this.streamingMessage);
         this.streamingMessage = null;
     },
 
