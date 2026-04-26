@@ -127,7 +127,10 @@ MEMORY_MAX_PROFILE_ITEMS: int = int(os.getenv("MEMORY_MAX_PROFILE_ITEMS", "30"))
 # =============================================================================
 # Reflection & Self-Correction
 # =============================================================================
-REFLECTION_ENABLED: bool = os.getenv("REFLECTION_ENABLED", "true").lower() != "false"
+# Reflexión crítica desactivada por defecto. Añade una llamada extra al modelo
+# por cada respuesta y, en la práctica, suele introducir más latencia que valor.
+# Para activarla: REFLECTION_ENABLED=true
+REFLECTION_ENABLED: bool = os.getenv("REFLECTION_ENABLED", "false").lower() == "true"
 REFLECTION_TEMPERATURE: float = float(os.getenv("REFLECTION_TEMPERATURE", "0.3"))
 MAX_STEP_RETRIES: int = int(os.getenv("MAX_STEP_RETRIES", "3"))
 

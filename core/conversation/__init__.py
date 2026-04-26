@@ -11,9 +11,11 @@ from core.conversation.context_builder import ContextBuilder
 from core.conversation.natural_loop import LoopResult, NaturalConversationLoop
 from core.conversation.parser import NaturalResponseParser
 from core.conversation.reflector import ResponseReflector
+from core.conversation.router import ConversationRouter
 
 __all__ = [
     "ContextBuilder",
+    "ConversationRouter",
     "LoopResult",
     "NaturalConversationLoop",
     "NaturalResponseParser",

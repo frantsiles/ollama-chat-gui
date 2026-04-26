@@ -78,7 +78,10 @@ class NaturalConversationLoop:
             cancel_check: función que indica si se solicitó cancelación.
         """
         tool_results: List[ToolResult] = []
-        # Mensajes intermedios del run actual (no se persisten en conversation)
+        # Respuestas intermedias del asistente (solo durante este run, no se
+        # persisten — son razonamiento intermedio que el usuario no necesita ver).
+        # Los tool results SÍ se persisten en conversation para que el modelo
+        # recuerde en turnos futuros qué leyó/ejecutó.
         extra_messages: List[Dict[str, Any]] = []
 
         for step in range(1, MAX_AGENT_STEPS + 1):
@@ -170,15 +173,17 @@ class NaturalConversationLoop:
             if result.new_cwd:
                 self._on_cwd_change(Path(result.new_cwd))
 
+            # Razonamiento intermedio del asistente: solo en este run
             extra_messages.append({"role": "assistant", "content": response_text})
-            extra_messages.append({
-                "role": "system",
-                "content": PromptManager.build_tool_result_context(
+            # Tool result: PERSISTENTE en conversation para que el modelo
+            # recuerde en turnos futuros qué leyó/ejecutó/encontró.
+            conversation.add_system_message(
+                PromptManager.build_tool_result_context(
                     step=step,
                     tool_call=str(tool_call),
                     result=result.output if result.success else f"Error: {result.error}",
-                ),
-            })
+                )
+            )
 
         return LoopResult(
             status="max_steps",

@@ -254,13 +254,19 @@ class Agent:
     # Extracción de memorias (delegada a MemoryExtractionHook)
     # ------------------------------------------------------------------
 
+    def extract_memories(self, user_input: str, response_content: str) -> None:
+        """Extrae memorias de una interacción. PÚBLICO — pensado para que el
+        caller (e.g. websocket) lo invoque como background task después de
+        haber enviado la respuesta al usuario."""
+        self._get_memory_hook().maybe_extract(user_input, response_content)
+
     def _maybe_extract_memories(
         self,
         user_input: str,
         response_content: str,
     ) -> None:
-        """Delega al hook de memoria. Construye el hook lazily si hay store."""
-        self._get_memory_hook().maybe_extract(user_input, response_content)
+        """Alias privado conservado por compatibilidad. Prefiere extract_memories."""
+        self.extract_memories(user_input, response_content)
 
     def _get_memory_hook(self):
         """Construye (o retorna cacheado) el MemoryExtractionHook."""
@@ -341,9 +347,9 @@ class Agent:
         # Agregar respuesta
         conversation.add_assistant_message(response)
 
-        # Extraer memorias en background
-        self._maybe_extract_memories(user_input, response)
-        
+        # NOTA: extracción de memorias se delega al caller (websocket) como
+        # background task tras enviar la respuesta — ya no es síncrona aquí.
+
         return AgentResponse(
             content=response,
             status="completed",
@@ -358,18 +364,9 @@ class Agent:
         step_callback: Optional[Callable[[str], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> AgentResponse:
-        """
-        Modo AGENT: Ciclo ReAct con herramientas.
-        
-        Args:
-            user_input: Mensaje del usuario
-            conversation: Conversación actual
-            attachments: Archivos adjuntos
-            images: Imágenes en base64
-            
-        Returns:
-            Respuesta del agente
-        """
+        """Modo AGENT: enruta entre fast-path conversacional o ciclo natural."""
+        from core.conversation.router import ConversationRouter
+
         self.state.reset()
         self.state.mode = OperationMode.AGENT
         self.state.is_running = True
@@ -384,11 +381,52 @@ class Agent:
             images=images or [],
         )
 
+        # Fast-path: mensajes claramente conversacionales (saludos, ack, etc.)
+        # → una sola llamada al modelo, sin parser, sin reflexión, sin memoria.
+        if not attachments and not images and ConversationRouter.is_conversational(user_input):
+            self.state.add_trace("Fast-path conversacional (sin parser/reflexión)")
+            return self._run_fast_path(user_input, conversation)
+
         return self._run_natural(
             user_input=user_input,
             conversation=conversation,
             step_callback=step_callback,
             cancel_check=cancel_check,
+        )
+
+    def _run_fast_path(
+        self,
+        user_input: str,
+        conversation: Conversation,
+    ) -> AgentResponse:
+        """Camino rápido para mensajes conversacionales: una sola llamada al modelo."""
+        from llm.prompts import NATURAL_CONVERSATIONAL_PROMPT
+
+        messages = self._build_messages(
+            conversation, system_prompt=NATURAL_CONVERSATIONAL_PROMPT
+        )
+
+        try:
+            response = self._call_model(messages)
+        except OllamaClientError as exc:
+            self.state.is_running = False
+            return AgentResponse(
+                content="",
+                status="error",
+                error=str(exc),
+                trace=self.state.trace,
+            )
+
+        if not response.strip():
+            response = "..."
+
+        conversation.add_assistant_message(response)
+        self.state.is_running = False
+        return AgentResponse(
+            content=response,
+            status="completed",
+            trace=self.state.trace,
+            new_cwd=str(self.current_cwd),
         )
     
     # ------------------------------------------------------------------
@@ -440,7 +478,8 @@ class Agent:
             final = self._reflect_on_response(result.final_response, conversation)
             conversation.add_assistant_message(final)
             self.state.is_running = False
-            self._maybe_extract_memories(user_input, final)
+            # NOTA: extracción de memorias se delega al caller (websocket) como
+            # background task tras enviar la respuesta — ya no es síncrona aquí.
             return AgentResponse(
                 content=final,
                 status="completed",

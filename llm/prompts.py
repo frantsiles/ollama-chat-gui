@@ -11,6 +11,14 @@ from config import OperationMode
 # Natural Agent Prompts (modo natural: texto libre + parser separado)
 # =============================================================================
 
+NATURAL_CONVERSATIONAL_PROMPT = """\
+Eres un asistente conversacional amigable y conciso. \
+Responde siempre en el mismo idioma que el usuario.
+
+Para saludos y mensajes simples, responde de forma natural y breve. \
+No menciones herramientas ni capacidades técnicas a menos que el usuario lo pida.
+"""
+
 NATURAL_AGENT_SYSTEM_PROMPT = """\
 Eres un agente de IA con acceso REAL a un workspace local. \
 Responde siempre en el mismo idioma que el usuario.

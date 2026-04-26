@@ -231,3 +231,63 @@ Empezar por las recomendaciones de **alto impacto y bajo esfuerzo**:
 4. **Persistir tool results** (3.2) — fundamental para coherencia entre turnos
 
 Con esos 4 cambios, el motor debería ser sustancialmente más rápido y coherente sin reescritura mayor.
+
+---
+
+## 5. Cambios aplicados (2026-04-25)
+
+### 5.1. Refactor estructural — responsabilidad única
+
+`core/agent.py` se redujo de **1300 líneas → 636 líneas** (51% menos) extrayendo:
+
+| Módulo nuevo | Líneas | Responsabilidad |
+|---|---|---|
+| [core/conversation/context_builder.py](../core/conversation/context_builder.py) | 145 | Mensajes para LLM (system, ventana, workspace) |
+| [core/conversation/natural_loop.py](../core/conversation/natural_loop.py) | 202 | Bucle modelo → parser → tool |
+| [core/conversation/parser.py](../core/conversation/parser.py) | 75 | Detecta tool calls en texto libre |
+| [core/conversation/reflector.py](../core/conversation/reflector.py) | 94 | Revisión crítica (opcional) |
+| [core/conversation/router.py](../core/conversation/router.py) | 97 | Fast-path conversacional |
+| [core/plan_executor.py](../core/plan_executor.py) | 447 | Ejecución de planes con retry |
+| [core/memory_hook.py](../core/memory_hook.py) | 67 | Extracción de memorias |
+
+**Beneficios:** cada componente con dependencias inyectadas, testeable en aislamiento, código muerto del path nativo eliminado.
+
+### 5.2. Fast-path conversacional ✅
+
+[core/conversation/router.py](../core/conversation/router.py) — `ConversationRouter.is_conversational()` clasifica el mensaje. Si es saludo / acknowledgment / mensaje muy corto sin keywords de acción, va al `_run_fast_path` del agente: **una sola llamada al modelo, sin parser, sin reflexión, sin memoria síncrona**.
+
+Verificado con 29 casos de test (saludos en es/en, agradecimientos, sí/no, tareas con keywords). 100% acierto.
+
+### 5.3. Reflexión desactivada por defecto ✅
+
+[config.py](../config.py) — `REFLECTION_ENABLED` ahora default `false`. Para activarla se necesita setear explícitamente `REFLECTION_ENABLED=true`. Quita una llamada del critical path.
+
+### 5.4. Extracción de memorias asíncrona ✅
+
+[web/websocket.py](../web/websocket.py) — la extracción de memorias ya NO bloquea la respuesta:
+1. Se envía la respuesta al usuario inmediatamente
+2. `asyncio.create_task(_extract_memories_bg())` dispara la extracción en background
+3. Si extrae algo nuevo, se notifica al frontend con `memory_updated`
+
+El `Agent.extract_memories()` se hizo público para que el WebSocket lo invoque externamente.
+
+### 5.5. Tool results persistidos en Conversation ✅
+
+[core/conversation/natural_loop.py](../core/conversation/natural_loop.py) — los resultados de tool ejecutadas ahora se guardan como mensajes `system` en la `Conversation` (no solo en `extra_messages` local). Las respuestas intermedias del modelo siguen siendo del run (no se persisten para no contaminar el chat).
+
+**Resultado:** si el usuario pregunta en el siguiente turno "¿qué viste en el archivo?", el modelo tiene el contenido real en su contexto y puede responder sin volver a leer.
+
+---
+
+## 6. Estado del motor tras los cambios
+
+**Antes:**
+- "Hola" → 4 llamadas al LLM (principal + parser + reflexión + memoria síncrona)
+- Tool results perdidos entre turnos
+- `agent.py` con 1300 líneas mezclando responsabilidades
+
+**Ahora:**
+- "Hola" → **1 llamada al LLM** (fast-path directo, sin parser ni reflexión)
+- Tool results persistidos → modelo recuerda turnos previos
+- `agent.py` con 636 líneas, solo orquestando
+- Componentes separados, testeables, con dependencias claras

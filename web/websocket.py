@@ -295,7 +295,7 @@ async def handle_chat_message(
             if agent._context_summary:
                 session.context_summary = agent._context_summary
 
-            # Enviar respuesta
+            # Enviar respuesta INMEDIATAMENTE — sin esperar memoria/sugerencias
             await websocket.send_json({
                 "type": "response",
                 "content": response.content,
@@ -325,21 +325,28 @@ async def handle_chat_message(
             session.agent_trace = response.trace
             metric.finish(response.status)
 
-            # --- Emitir evento de memoria si hubo extracción ---
-            if memory_store and response.status == "completed":
-                try:
-                    ws_memories = memory_store.get_workspace_memories(
-                        session.workspace_root
-                    )
-                    profile_traits = memory_store.get_profile_traits()
-                    if ws_memories or profile_traits:
-                        await websocket.send_json({
-                            "type": "memory_updated",
-                            "workspace_memories": len(ws_memories),
-                            "profile_traits": len(profile_traits),
-                        })
-                except Exception:
-                    pass
+            # --- Extracción de memorias en BACKGROUND (no bloquea respuesta) ---
+            if memory_store and response.status == "completed" and response.content:
+                async def _extract_memories_bg() -> None:
+                    try:
+                        await asyncio.to_thread(
+                            agent.extract_memories, raw_content, response.content
+                        )
+                        # Notificar al frontend si se extrajo algo nuevo
+                        ws_memories = memory_store.get_workspace_memories(
+                            session.workspace_root
+                        )
+                        profile_traits = memory_store.get_profile_traits()
+                        if ws_memories or profile_traits:
+                            await websocket.send_json({
+                                "type": "memory_updated",
+                                "workspace_memories": len(ws_memories),
+                                "profile_traits": len(profile_traits),
+                            })
+                    except Exception as _mem_exc:
+                        logger.debug("Error extrayendo memorias en background: %s", _mem_exc)
+
+                asyncio.create_task(_extract_memories_bg())
 
             # --- Sugerencias proactivas (background, no bloquea) ---
             # Se generan después de enviar la respuesta para no añadir latencia.
