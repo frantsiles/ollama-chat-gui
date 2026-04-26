@@ -165,6 +165,7 @@ async def handle_chat_message(
         )
         agent.approval_manager.set_level(session.approval_level)
         agent._context_summary = session.context_summary
+        agent._max_agent_steps = session.max_agent_steps
 
         # --- Memoria a largo plazo ---
         memory_store = None
@@ -248,7 +249,7 @@ async def handle_chat_message(
 
                 try:
                     response = await asyncio.wait_for(
-                        _drain_and_wait(), timeout=AGENT_TASK_TIMEOUT
+                        _drain_and_wait(), timeout=session.agent_task_timeout
                     )
                 except asyncio.TimeoutError:
                     agent_task.cancel()
@@ -256,7 +257,7 @@ async def handle_chat_message(
                     await websocket.send_json({
                         "type": "error",
                         "message": (
-                            f"El agente tardó más de {AGENT_TASK_TIMEOUT}s "
+                            f"El agente tardó más de {session.agent_task_timeout}s "
                             "y fue cancelado automáticamente."
                         ),
                     })
@@ -294,6 +295,18 @@ async def handle_chat_message(
             # --- Persistir sumario de contexto actualizado ---
             if agent._context_summary:
                 session.context_summary = agent._context_summary
+
+            # Error interno del loop: enviarlo como type=error para que el
+            # frontend lo muestre (content puede ser vacío en este caso).
+            if response.status == "error":
+                metric.finish("error")
+                await websocket.send_json({
+                    "type": "error",
+                    "message": response.error or "El agente encontró un error inesperado. Inténtalo de nuevo.",
+                    "trace": response.trace,
+                })
+                SessionManager.save(session)
+                return
 
             # Enviar respuesta INMEDIATAMENTE — sin esperar memoria/sugerencias
             await websocket.send_json({

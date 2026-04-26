@@ -103,6 +103,15 @@ class PersistenceDB:
         try:
             with self._connect() as conn:
                 conn.executescript(_SCHEMA)
+                # Migraciones incrementales: agregar columnas nuevas sin romper DBs existentes
+                for migration in (
+                    "ALTER TABLE sessions ADD COLUMN max_agent_steps INTEGER NOT NULL DEFAULT 100",
+                    "ALTER TABLE sessions ADD COLUMN agent_task_timeout INTEGER NOT NULL DEFAULT 300",
+                ):
+                    try:
+                        conn.execute(migration)
+                    except sqlite3.OperationalError:
+                        pass  # columna ya existe
         except sqlite3.Error as exc:
             logger.error("Error initializing DB schema: %s", exc)
 
@@ -129,20 +138,23 @@ class PersistenceDB:
                     """
                     INSERT INTO sessions
                         (id, mode, model, temperature, workspace_root, current_cwd,
-                         approval_level, context_summary, pending_approval,
-                         current_plan, created_at, updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+                         approval_level, max_agent_steps, agent_task_timeout,
+                         context_summary, pending_approval, current_plan,
+                         created_at, updated_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(id) DO UPDATE SET
-                        mode             = excluded.mode,
-                        model            = excluded.model,
-                        temperature      = excluded.temperature,
-                        workspace_root   = excluded.workspace_root,
-                        current_cwd      = excluded.current_cwd,
-                        approval_level   = excluded.approval_level,
-                        context_summary  = excluded.context_summary,
-                        pending_approval = excluded.pending_approval,
-                        current_plan     = excluded.current_plan,
-                        updated_at       = excluded.updated_at
+                        mode               = excluded.mode,
+                        model              = excluded.model,
+                        temperature        = excluded.temperature,
+                        workspace_root     = excluded.workspace_root,
+                        current_cwd        = excluded.current_cwd,
+                        approval_level     = excluded.approval_level,
+                        max_agent_steps    = excluded.max_agent_steps,
+                        agent_task_timeout = excluded.agent_task_timeout,
+                        context_summary    = excluded.context_summary,
+                        pending_approval   = excluded.pending_approval,
+                        current_plan       = excluded.current_plan,
+                        updated_at         = excluded.updated_at
                     """,
                     (
                         session_id,
@@ -152,6 +164,8 @@ class PersistenceDB:
                         meta.get("workspace_root", ""),
                         meta.get("current_cwd", ""),
                         meta.get("approval_level", "write"),
+                        meta.get("max_agent_steps", 100),
+                        meta.get("agent_task_timeout", 300),
                         meta.get("context_summary", ""),
                         (
                             json.dumps(meta["pending_approval"])

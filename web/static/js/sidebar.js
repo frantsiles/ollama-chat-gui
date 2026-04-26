@@ -18,7 +18,11 @@ const Sidebar = {
         this.tempValue       = document.getElementById('temp-value');
         this.workspacePath   = document.getElementById('workspace-path');
         this.approvalLevel   = document.getElementById('approval-level');
-        this.traceList       = document.getElementById('trace-list');
+        this.maxAgentSteps     = document.getElementById('max-agent-steps');
+        this.stepsValue        = document.getElementById('steps-value');
+        this.agentTaskTimeout  = document.getElementById('agent-task-timeout');
+        this.timeoutValue      = document.getElementById('timeout-value');
+        this.traceList         = document.getElementById('trace-list');
 
         this.bindEvents();
         this.loadSettings();
@@ -77,6 +81,30 @@ const Sidebar = {
         // Approval
         this.approvalLevel.addEventListener('change', (e) => {
             this.updateConfig({ approval_level: e.target.value });
+        });
+
+        // Max agent steps
+        this.maxAgentSteps.addEventListener('input', (e) => {
+            if (this.stepsValue) this.stepsValue.textContent = e.target.value;
+        });
+        this.maxAgentSteps.addEventListener('change', (e) => {
+            const val = Math.max(1, Math.min(500, parseInt(e.target.value, 10) || 100));
+            e.target.value = val;
+            if (this.stepsValue) this.stepsValue.textContent = val;
+            this.updateConfig({ max_agent_steps: val });
+            this._saveSettings({ maxAgentSteps: val });
+        });
+
+        // Agent task timeout
+        this.agentTaskTimeout.addEventListener('input', (e) => {
+            if (this.timeoutValue) this.timeoutValue.textContent = e.target.value;
+        });
+        this.agentTaskTimeout.addEventListener('change', (e) => {
+            const val = Math.max(30, Math.min(3600, parseInt(e.target.value, 10) || 300));
+            e.target.value = val;
+            if (this.timeoutValue) this.timeoutValue.textContent = val;
+            this.updateConfig({ agent_task_timeout: val });
+            this._saveSettings({ agentTaskTimeout: val });
         });
 
         // Change workspace button (manual path input)
@@ -169,6 +197,16 @@ const Sidebar = {
         if (settings.approvalLevel) {
             this.approvalLevel.value = settings.approvalLevel;
         }
+        if (settings.maxAgentSteps !== undefined) {
+            const val = settings.maxAgentSteps;
+            this.maxAgentSteps.value = val;
+            if (this.stepsValue) this.stepsValue.textContent = val;
+        }
+        if (settings.agentTaskTimeout !== undefined) {
+            const val = settings.agentTaskTimeout;
+            this.agentTaskTimeout.value = val;
+            if (this.timeoutValue) this.timeoutValue.textContent = val;
+        }
         if (settings.workspacePath) {
             this.workspacePath.textContent = Utils.truncatePath(settings.workspacePath, 40);
         }
@@ -192,6 +230,16 @@ const Sidebar = {
                 }
                 if (config.approval_level) {
                     this._saveSettings({ approvalLevel: config.approval_level });
+                }
+                if (config.max_agent_steps !== undefined) {
+                    this.maxAgentSteps.value = config.max_agent_steps;
+                    if (this.stepsValue) this.stepsValue.textContent = config.max_agent_steps;
+                    this._saveSettings({ maxAgentSteps: config.max_agent_steps });
+                }
+                if (config.agent_task_timeout !== undefined) {
+                    this.agentTaskTimeout.value = config.agent_task_timeout;
+                    if (this.timeoutValue) this.timeoutValue.textContent = config.agent_task_timeout;
+                    this._saveSettings({ agentTaskTimeout: config.agent_task_timeout });
                 }
                 if (config.workspace_root) {
                     this._saveSettings({ workspacePath: config.workspace_root });

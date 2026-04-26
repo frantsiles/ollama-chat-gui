@@ -205,6 +205,40 @@
                             </div>
                         </div>
 
+                        <!-- Max Agent Steps + Timeout -->
+                        <div class="panel-section">
+                            <div class="panel-section-header" data-target="cfg-steps">
+                                <span>Límites del agente</span>
+                                <svg class="panel-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                            <div class="panel-section-body" id="cfg-steps">
+                                <div class="cfg-steps-row">
+                                    <label for="max-agent-steps" class="cfg-steps-label">
+                                        Pasos máx. <span id="steps-value" class="badge">100</span>
+                                    </label>
+                                    <input type="number" id="max-agent-steps"
+                                           class="cfg-steps-input"
+                                           min="1" max="500" step="1" value="100"
+                                           title="Pasos máximos del agente (1–500)"
+                                           placeholder="100">
+                                    <div class="cfg-steps-hint">Ciclos modelo→tool por mensaje</div>
+                                </div>
+                                <div class="cfg-steps-row">
+                                    <label for="agent-task-timeout" class="cfg-steps-label">
+                                        Timeout (s) <span id="timeout-value" class="badge">300</span>
+                                    </label>
+                                    <input type="number" id="agent-task-timeout"
+                                           class="cfg-steps-input"
+                                           min="30" max="3600" step="30" value="300"
+                                           title="Tiempo máximo total de la tarea (30–3600 s)"
+                                           placeholder="300">
+                                    <div class="cfg-steps-hint">Segundos antes de cancelar automáticamente</div>
+                                </div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
 

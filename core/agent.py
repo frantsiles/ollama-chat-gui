@@ -90,6 +90,8 @@ class Agent:
         self._memory_context: str = ""
         # Optional MemoryStore for auto-extraction
         self._memory_store: Optional[Any] = None
+        # Límite de pasos por sesión (sobreescribe MAX_AGENT_STEPS del config)
+        self._max_agent_steps: Optional[int] = None
 
         # Registrar herramientas MCP en el registry para el modo JSON-ReAct
         self._register_mcp_tools()
@@ -471,6 +473,7 @@ class Agent:
             system_prompt=full_system_prompt,
             step_callback=step_callback,
             cancel_check=cancel_check,
+            max_steps=self._max_agent_steps,
         )
 
         # Post-procesos según el status del bucle

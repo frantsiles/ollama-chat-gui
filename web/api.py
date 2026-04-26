@@ -30,6 +30,8 @@ class ConfigUpdate(BaseModel):
     temperature: Optional[float] = None
     workspace_root: Optional[str] = None
     approval_level: Optional[str] = None
+    max_agent_steps: Optional[int] = None
+    agent_task_timeout: Optional[int] = None
 
 
 class SessionCreate(BaseModel):
@@ -150,6 +152,8 @@ async def get_config(session_id: str) -> Dict[str, Any]:
         "workspace_root": session.workspace_root,
         "current_cwd": session.current_cwd,
         "approval_level": session.approval_level,
+        "max_agent_steps": session.max_agent_steps,
+        "agent_task_timeout": session.agent_task_timeout,
         "modes": [OperationMode.CHAT, OperationMode.AGENT, OperationMode.PLAN],
         "approval_levels": [ApprovalLevel.NONE, ApprovalLevel.WRITE_ONLY, ApprovalLevel.ALL],
     }
@@ -177,7 +181,11 @@ async def update_config(session_id: str, data: ConfigUpdate) -> Dict[str, Any]:
     if data.approval_level is not None:
         if data.approval_level in (ApprovalLevel.NONE, ApprovalLevel.WRITE_ONLY, ApprovalLevel.ALL):
             session.approval_level = data.approval_level
-    
+    if data.max_agent_steps is not None:
+        session.max_agent_steps = max(1, min(500, data.max_agent_steps))
+    if data.agent_task_timeout is not None:
+        session.agent_task_timeout = max(30, min(3600, data.agent_task_timeout))
+
     return {"config": session.to_dict()}
 
 

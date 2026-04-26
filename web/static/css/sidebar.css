@@ -88,3 +88,36 @@
 .trace-item.pending {
     border-left-color: var(--accent-warning);
 }
+
+.cfg-steps-input {
+    width: 100%;
+    padding: 4px 8px;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+}
+
+.cfg-steps-hint {
+    font-size: 0.75rem;
+    color: var(--text-tertiary);
+    margin-top: 4px;
+}
+
+.cfg-steps-row {
+    margin-bottom: 10px;
+}
+
+.cfg-steps-row:last-child {
+    margin-bottom: 0;
+}
+
+.cfg-steps-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}

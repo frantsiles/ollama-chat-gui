@@ -68,6 +68,7 @@ class NaturalConversationLoop:
         system_prompt: str,
         step_callback: Optional[Callable[[str], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
+        max_steps: Optional[int] = None,
     ) -> LoopResult:
         """Ejecuta el bucle natural y retorna el resultado.
 
@@ -76,7 +77,9 @@ class NaturalConversationLoop:
             system_prompt: system prompt completo (con workspace embebido).
             step_callback: notificación opcional de cada paso.
             cancel_check: función que indica si se solicitó cancelación.
+            max_steps: límite de pasos; si None usa MAX_AGENT_STEPS del config.
         """
+        limit = max_steps if max_steps is not None else MAX_AGENT_STEPS
         tool_results: List[ToolResult] = []
         # Respuestas intermedias del asistente (solo durante este run, no se
         # persisten — son razonamiento intermedio que el usuario no necesita ver).
@@ -84,7 +87,7 @@ class NaturalConversationLoop:
         # recuerde en turnos futuros qué leyó/ejecutó.
         extra_messages: List[Dict[str, Any]] = []
 
-        for step in range(1, MAX_AGENT_STEPS + 1):
+        for step in range(1, limit + 1):
             self._state.step_count = step
 
             if cancel_check and cancel_check():
@@ -187,7 +190,7 @@ class NaturalConversationLoop:
 
         return LoopResult(
             status="max_steps",
-            final_response=f"Se alcanzó el límite de {MAX_AGENT_STEPS} pasos.",
+            final_response=f"Se alcanzó el límite de {limit} pasos.",
             tool_results=tool_results,
         )
 

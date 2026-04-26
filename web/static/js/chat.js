@@ -101,13 +101,14 @@ const Chat = {
         wsManager.on('start', () => {
             this.isProcessing = true;
             this.showTypingIndicator();
+            this._startProcessingTimeout(120);
         });
 
         wsManager.on('response', (data) => {
             this.isProcessing = false;
             this.hideTypingIndicator();
+            this._clearProcessingTimeout();
 
-            // Mostrar mensaje de cancelación con estilo especial
             if (data.status === 'cancelled') {
                 this.renderMessage({
                     role: 'assistant',
@@ -116,21 +117,35 @@ const Chat = {
                 });
                 return;
             }
-            
-            if (data.content) {
+
+            // El agente retornó error pero con type=response (fallo interno del loop)
+            if (data.status === 'error') {
                 this.renderMessage({
                     role: 'assistant',
-                    content: data.content,
+                    content: '⚠️ ' + (data.error || data.content || 'El agente encontró un error. Inténtalo de nuevo.'),
+                    timestamp: new Date().toISOString()
+                });
+                if (data.trace && data.trace.length > 0) Sidebar.updateTrace(data.trace);
+                return;
+            }
+
+            // Respuesta normal (completed, max_steps, awaiting_approval)
+            const content = data.content || (data.status === 'max_steps'
+                ? `Se alcanzó el límite de pasos del agente. Puedes continuar enviando otro mensaje.`
+                : null);
+
+            if (content) {
+                this.renderMessage({
+                    role: 'assistant',
+                    content,
                     timestamp: new Date().toISOString()
                 });
             }
 
-            // Show trace if available
             if (data.trace && data.trace.length > 0) {
                 Sidebar.updateTrace(data.trace);
             }
 
-            // Show tool results
             if (data.tool_results && data.tool_results.length > 0) {
                 data.tool_results.forEach(result => {
                     this.renderToolCall(result);
@@ -151,12 +166,14 @@ const Chat = {
 
         wsManager.on('stream_end', (data) => {
             this.isProcessing = false;
+            this._clearProcessingTimeout();
             this.finalizeStreamingMessage(data.content);
         });
 
         wsManager.on('error', (data) => {
             this.isProcessing = false;
             this.hideTypingIndicator();
+            this._clearProcessingTimeout();
             this.renderMessage({
                 role: 'assistant',
                 content: `⚠️ ${data.message || 'Error al procesar la solicitud.'}`,
@@ -187,6 +204,7 @@ const Chat = {
             if (status === 'disconnected' && this.isProcessing) {
                 this.isProcessing = false;
                 this.hideTypingIndicator();
+                this._clearProcessingTimeout();
                 this.renderMessage({
                     role: 'assistant',
                     content: '🔌 La conexión se interrumpió mientras el agente procesaba tu solicitud. Puedes volver a intentarlo.',
@@ -195,6 +213,24 @@ const Chat = {
             }
             this.updateSendButton();
         });
+    },
+
+    _processingTimeout: null,
+
+    _startProcessingTimeout(seconds = 120) {
+        this._clearProcessingTimeout();
+        this._processingTimeout = setTimeout(() => {
+            if (this.isProcessing) {
+                this.updateTypingStep(`⏳ Sigue procesando… (${seconds}s). Si no responde, usa el botón de cancelar.`);
+            }
+        }, seconds * 1000);
+    },
+
+    _clearProcessingTimeout() {
+        if (this._processingTimeout) {
+            clearTimeout(this._processingTimeout);
+            this._processingTimeout = null;
+        }
     },
 
     /**
