@@ -86,6 +86,7 @@ class NaturalConversationLoop:
         # Los tool results SÍ se persisten en conversation para que el modelo
         # recuerde en turnos futuros qué leyó/ejecutó.
         extra_messages: List[Dict[str, Any]] = []
+        consecutive_empty = 0
 
         for step in range(1, limit + 1):
             self._state.step_count = step
@@ -112,8 +113,22 @@ class NaturalConversationLoop:
                 )
 
             if not response_text.strip():
-                self._state.add_trace(f"Paso {step}: respuesta vacía, reintentando")
+                consecutive_empty += 1
+                self._state.add_trace(f"Paso {step}: respuesta vacía ({consecutive_empty}/3)")
+                if consecutive_empty >= 3:
+                    summary = (
+                        "Las herramientas se ejecutaron correctamente."
+                        if tool_results
+                        else "Sin resultado."
+                    )
+                    return LoopResult(
+                        status="completed",
+                        final_response=summary,
+                        tool_results=tool_results,
+                    )
                 continue
+
+            consecutive_empty = 0
 
             self._state.add_trace(f"Paso {step}: analizando respuesta con parser")
             parsed = self._parse_response(response_text)
@@ -180,13 +195,23 @@ class NaturalConversationLoop:
             extra_messages.append({"role": "assistant", "content": response_text})
             # Tool result: PERSISTENTE en conversation para que el modelo
             # recuerde en turnos futuros qué leyó/ejecutó/encontró.
-            conversation.add_system_message(
-                PromptManager.build_tool_result_context(
-                    step=step,
-                    tool_call=str(tool_call),
-                    result=result.output if result.success else f"Error: {result.error}",
-                )
+            tool_result_text = PromptManager.build_tool_result_context(
+                step=step,
+                tool_call=str(tool_call),
+                result=result.output if result.success else f"Error: {result.error}",
             )
+            conversation.add_system_message(tool_result_text)
+            # Nudge: indicar al modelo que decida si la tarea está completa.
+            extra_messages.append({
+                "role": "system",
+                "content": (
+                    "La herramienta se ejecutó correctamente. "
+                    "Si la tarea del usuario ya está resuelta, responde en UNA sola frase "
+                    "confirmando qué hiciste (ej: 'Listo, creé el archivo X con Y.'). "
+                    "NO muestres el contenido del archivo ni bloques de código — solo confirma. "
+                    "Solo usa otra herramienta si falta algo concreto para completar la tarea."
+                ),
+            })
 
         return LoopResult(
             status="max_steps",

@@ -14,12 +14,15 @@ from typing import Any, Callable, Dict, List, Optional
 
 from llm.prompts import NATURAL_PARSER_PROMPT, PromptManager
 
-# Palabras clave que indican intención de escribir/crear un archivo
+# Palabras clave que indican INTENCIÓN FUTURA de escribir/crear un archivo.
+# Solo tiempo futuro/presente de acción — NO confirmaciones pasadas ("aquí está",
+# "ya escribí", "el archivo contiene") para evitar re-detectar resúmenes post-tool.
 _WRITE_INTENT_PATTERNS = re.compile(
     r'\b(voy a (escribir|crear|implementar|guardar)|'
     r'escribiré|crearé|implementaré|'
-    r'write_file|escribiendo|creando el archivo|'
-    r'aquí (está|tienes) (el|la implementación|el contenido|el archivo))\b',
+    r'escribiendo en|creando el archivo|'
+    r'procedo a (escribir|crear)|'
+    r'write_file\s*\()\b',
     re.IGNORECASE,
 )
 
