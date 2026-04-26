@@ -573,3 +573,73 @@
         width: 100%;
     }
 }
+
+/* =============================================================================
+   Inline message edit mode
+   ============================================================================= */
+
+.message.user .message-body:not(.editing) {
+    cursor: pointer;
+    transition: filter 0.15s;
+}
+
+.message.user .message-body:not(.editing):hover {
+    filter: brightness(1.12);
+}
+
+.message.user .message-body.editing {
+    background: var(--bg-secondary);
+    padding: var(--space-sm);
+}
+
+.msg-edit-textarea {
+    width: 100%;
+    background: var(--bg-primary);
+    border: 1px solid var(--accent-primary);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-family: inherit;
+    font-size: var(--text-sm);
+    line-height: 1.5;
+    padding: var(--space-sm) var(--space-md);
+    resize: none;
+    outline: none;
+    box-sizing: border-box;
+    min-height: 2.5rem;
+}
+
+.msg-edit-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
+    margin-top: var(--space-xs);
+}
+
+.msg-edit-cancel {
+    background: transparent;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-size: var(--text-xs);
+    padding: 3px 10px;
+}
+
+.msg-edit-cancel:hover {
+    background: var(--bg-tertiary);
+}
+
+.msg-edit-send {
+    background: var(--accent-primary);
+    border: none;
+    border-radius: var(--radius-sm);
+    color: #fff;
+    cursor: pointer;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    padding: 3px 12px;
+}
+
+.msg-edit-send:hover {
+    opacity: 0.9;
+}

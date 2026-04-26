@@ -284,14 +284,90 @@ const Chat = {
                     <span class="message-author">${author}</span>
                     <span class="message-time">${Utils.formatTime(msg.timestamp)}</span>
                 </div>
-                <div class="message-body">
+                <div class="message-body" data-raw="${(msg.content || '').replace(/"/g, '&quot;')}">
                     ${Utils.parseMarkdown(msg.content)}
                 </div>
             </div>
         `;
 
+        if (msg.role === 'user') {
+            const bodyEl = messageEl.querySelector('.message-body');
+            bodyEl.title = 'Doble clic para editar y reenviar';
+            bodyEl.addEventListener('dblclick', () => this._enterEditMode(bodyEl));
+        }
+
         this.messagesEl.appendChild(messageEl);
         this.scrollToBottom();
+    },
+
+    /**
+     * Put a user message body into inline edit mode
+     */
+    _enterEditMode(bodyEl) {
+        if (bodyEl.classList.contains('editing') || this.isProcessing) return;
+        bodyEl.classList.add('editing');
+
+        const original = bodyEl.dataset.raw || bodyEl.textContent.trim();
+        bodyEl.innerHTML = `
+            <textarea class="msg-edit-textarea">${original}</textarea>
+            <div class="msg-edit-actions">
+                <button type="button" class="msg-edit-cancel">Cancelar</button>
+                <button type="button" class="msg-edit-send">Reenviar ↵</button>
+            </div>
+        `;
+
+        const textarea = bodyEl.querySelector('.msg-edit-textarea');
+        textarea.style.height = 'auto';
+        textarea.style.height = textarea.scrollHeight + 'px';
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+
+        textarea.addEventListener('input', () => {
+            textarea.style.height = 'auto';
+            textarea.style.height = textarea.scrollHeight + 'px';
+        });
+
+        textarea.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                this._submitEdit(bodyEl, textarea.value);
+            }
+            if (e.key === 'Escape') {
+                this._cancelEdit(bodyEl, original);
+            }
+        });
+
+        bodyEl.querySelector('.msg-edit-cancel').addEventListener('click', () => {
+            this._cancelEdit(bodyEl, original);
+        });
+        bodyEl.querySelector('.msg-edit-send').addEventListener('click', () => {
+            this._submitEdit(bodyEl, textarea.value);
+        });
+    },
+
+    _cancelEdit(bodyEl, original) {
+        bodyEl.classList.remove('editing');
+        bodyEl.innerHTML = Utils.parseMarkdown(original);
+    },
+
+    _submitEdit(bodyEl, newContent) {
+        const trimmed = newContent.trim();
+        if (!trimmed) return;
+
+        // Restore the bubble with the new text
+        bodyEl.classList.remove('editing');
+        bodyEl.dataset.raw = trimmed;
+        bodyEl.innerHTML = Utils.parseMarkdown(trimmed);
+
+        // Send to model
+        this.hideWelcome();
+        this._startProcessingTimeout(120);
+        const mode = App.state.mode;
+        if (mode === 'chat') {
+            wsManager.sendStreamChat(trimmed);
+        } else {
+            wsManager.sendChat(trimmed, []);
+        }
     },
 
     /**
