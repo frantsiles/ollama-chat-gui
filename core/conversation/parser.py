@@ -129,13 +129,30 @@ class WriteFileHeuristic(ToolHeuristic):
         r'write_file\s*\(|'
         r"i(?:'ll| will| am going to) (write|create|implement|save)|"
         r'writing to|creating (the |a )?file|'
-        r'let me (write|create|implement))\b',
+        r'let me (write|create|implement)|'
+        # Pasado / declarativo (el modelo "finge" haber escrito ya)
+        r'he (creado|escrito|implementado|generado)|'
+        r'(he aquí|aquí está|aquí tienes|a continuación)\b[^.]{0,60}\barchivo\b|'
+        r'(aquí está|aquí tienes|here(?:\'s| is))\b|'
+        r'ha sido creado|fue creado|'
+        r"i(?:'ve| have) (created|written|implemented|generated)|"
+        r'(el archivo|the file)\s+\S+\s+(ha sido creado|fue creado|contains?|contiene))\b',
+        re.IGNORECASE,
+    )
+
+    # Indica que el modelo está LEYENDO/ANALIZANDO código, no escribiendo.
+    # Si esto aparece, NO disparamos write_file en el fallback.
+    _READ_CONTEXT = re.compile(
+        r'\b(el código (actual|existente)|este código (es|actual|existente)|'
+        r'el archivo (actual|existente|ya) (contiene|tiene|importa)|'
+        r'analizando|revisando el contenido|el contenido actual de|'
+        r'this (existing|current) (code|file)|the (current|existing) (code|file)|'
+        r'analyzing|reviewing the content)\b',
         re.IGNORECASE,
     )
 
     def match(self, response: str) -> Optional[Dict[str, Any]]:
-        if not self._INTENT.search(response):
-            return None
+        has_intent = bool(self._INTENT.search(response))
 
         code_match = _CODE_BLOCK_PATTERN.search(response)
         if not code_match:
@@ -149,11 +166,28 @@ class WriteFileHeuristic(ToolHeuristic):
         if not path:
             return None
 
-        return {
-            "needs_tool": True,
-            "tool": "write_file",
-            "args": {"path": path, "content": content},
-        }
+        # Si hay intent explícito, disparar directamente
+        if has_intent:
+            return {
+                "needs_tool": True,
+                "tool": "write_file",
+                "args": {"path": path, "content": content},
+            }
+
+        # Fallback agresivo: code block sustancial + path mencionado y NO es
+        # lectura/análisis explícito. Cubre respuestas declarativas del modelo
+        # como "El archivo test.py:" + code o "```python\n...\n```\ntest.py".
+        if self._READ_CONTEXT.search(response):
+            return None
+
+        if len(content.strip()) > 20:
+            return {
+                "needs_tool": True,
+                "tool": "write_file",
+                "args": {"path": path, "content": content},
+            }
+
+        return None
 
 
 class ReadFileHeuristic(ToolHeuristic):
