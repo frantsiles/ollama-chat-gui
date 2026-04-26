@@ -46,6 +46,7 @@ const App = {
         this.safeInitModule('Breadcrumbs', window.Breadcrumbs);
         this.safeInitModule('TreeSelection', window.TreeSelection);
         this.safeInitModule('GitStatus', window.GitStatus);
+        this.safeInitModule('GitPanel', window.GitPanel);
         this.safeInitModule('FileWatcher', window.FileWatcher);
         this.safeInitModule('Sidebar', window.Sidebar);
         this.safeInitModule('Plan', window.Plan);

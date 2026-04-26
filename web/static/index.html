@@ -17,6 +17,7 @@
     <link rel="stylesheet" href="/static/css/chat.css">
     <link rel="stylesheet" href="/static/css/mcp.css">
     <link rel="stylesheet" href="/static/css/explorer.css">
+    <link rel="stylesheet" href="/static/css/git.css">
     <!-- Highlight.js for syntax highlighting in file viewer -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css" id="hljs-theme-dark">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css" id="hljs-theme-light" disabled>
@@ -118,6 +119,13 @@
                         <line x1="8" y1="11" x2="14" y2="11"/>
                         <line x1="11" y1="8" x2="11" y2="14"/>
                     </svg>
+                </button>
+                <button class="activity-btn" data-panel="git" id="activity-git" title="Control de versiones (Git)">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+                        <path d="M6 9v6M9 6h6a3 3 0 0 1 3 3v6"/>
+                    </svg>
+                    <span class="activity-git-badge" id="activity-git-badge" hidden></span>
                 </button>
             </div>
 
@@ -404,6 +412,208 @@
                     </div>
                 </div>
 
+                <!-- ── GIT Panel ── -->
+                <div class="panel" data-panel="git" id="panel-git">
+                    <div class="panel-title">Control de versiones</div>
+                    <div class="git-panel-body" id="git-panel-body">
+
+                        <!-- No-repo state -->
+                        <div class="git-no-repo" id="git-no-repo" hidden>
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="git-no-repo-icon">
+                                <circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/>
+                                <path d="M6 9v6M9 6h6a3 3 0 0 1 3 3v6"/>
+                            </svg>
+                            <p class="git-no-repo-text">Esta carpeta no es un repositorio git.</p>
+                            <button type="button" class="git-btn git-btn-primary" id="git-init-btn">
+                                Inicializar repositorio
+                            </button>
+                        </div>
+
+                        <!-- No-workspace state -->
+                        <div class="git-no-workspace" id="git-no-workspace">
+                            <p class="git-no-repo-text">Selecciona un workspace para ver el estado git.</p>
+                        </div>
+
+                        <!-- Repo info header -->
+                        <div class="git-repo-info" id="git-repo-info" hidden>
+                            <div class="git-branch-row">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/>
+                                    <circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>
+                                </svg>
+                                <span class="git-branch-name" id="git-branch-name">main</span>
+                                <span class="git-sync-badges" id="git-sync-badges"></span>
+                                <div class="git-header-actions">
+                                    <button type="button" class="git-icon-btn" id="git-pull-btn" title="Pull">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                            <polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/>
+                                        </svg>
+                                    </button>
+                                    <button type="button" class="git-icon-btn" id="git-push-btn" title="Push">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                                            <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/>
+                                        </svg>
+                                    </button>
+                                    <button type="button" class="git-icon-btn" id="git-refresh-btn" title="Refrescar">
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="23 4 23 10 17 10"/>
+                                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="git-remote-row" id="git-remote-row" hidden>
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" flex-shrink="0">
+                                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+                                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+                                </svg>
+                                <span class="git-remote-url" id="git-remote-url"></span>
+                                <button type="button" class="git-file-action-btn" id="git-edit-remote-btn" title="Editar URL">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                    </svg>
+                                </button>
+                                <button type="button" class="git-file-action-btn danger" id="git-remove-remote-btn" title="Eliminar remote">
+                                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14H6L5 6"/>
+                                        <path d="M10 11v6"/><path d="M14 11v6"/>
+                                        <path d="M9 6V4h6v2"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <!-- No remote configured -->
+                            <div class="git-no-remote-row" id="git-no-remote-row" hidden>
+                                <span class="git-no-remote-label">Sin remote</span>
+                                <button type="button" class="git-btn git-btn-sm" id="git-add-remote-btn">Añadir remote</button>
+                            </div>
+                            <!-- Add remote form -->
+                            <div class="git-add-remote-form" id="git-add-remote-form" hidden>
+                                <input type="text" class="git-input" id="git-remote-url-input"
+                                       placeholder="https://github.com/usuario/repo.git" autocomplete="off">
+                                <div class="git-row-actions">
+                                    <button type="button" class="git-btn git-btn-sm" id="git-add-remote-cancel">Cancelar</button>
+                                    <button type="button" class="git-btn git-btn-sm git-btn-primary" id="git-add-remote-save">Añadir</button>
+                                </div>
+                            </div>
+                            <!-- Create GitHub repo form -->
+                            <div class="git-create-repo-form" id="git-create-repo-form" hidden>
+                                <p class="git-create-repo-hint">El repositorio no existe en GitHub. ¿Crearlo ahora?</p>
+                                <input type="text" class="git-input" id="git-gh-repo-name" placeholder="nombre-del-repo" autocomplete="off">
+                                <input type="password" class="git-input" id="git-gh-token" placeholder="GitHub Personal Access Token" autocomplete="off">
+                                <label class="git-check-label">
+                                    <input type="checkbox" id="git-gh-private" checked>
+                                    Repositorio privado
+                                </label>
+                                <div class="git-row-actions">
+                                    <button type="button" class="git-btn git-btn-sm" id="git-create-repo-cancel">Cancelar</button>
+                                    <button type="button" class="git-btn git-btn-sm git-btn-primary" id="git-create-repo-save">Crear en GitHub</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Git user info -->
+                        <div class="git-section" id="git-user-section" hidden>
+                            <div class="git-section-header" data-target="git-user-body">
+                                <svg class="git-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                                <span>Usuario</span>
+                            </div>
+                            <div class="git-section-body" id="git-user-body">
+                                <div class="git-user-info" id="git-user-info"></div>
+                                <div class="git-user-edit" id="git-user-edit" hidden>
+                                    <input type="text" id="git-config-name" class="git-input" placeholder="Nombre" autocomplete="off" />
+                                    <input type="email" id="git-config-email" class="git-input" placeholder="Email" autocomplete="off" />
+                                    <div class="git-row-actions">
+                                        <button type="button" class="git-btn git-btn-sm" id="git-config-cancel">Cancelar</button>
+                                        <button type="button" class="git-btn git-btn-primary git-btn-sm" id="git-config-save">Guardar</button>
+                                    </div>
+                                </div>
+                                <button type="button" class="git-link-btn" id="git-edit-user-btn">Editar identidad</button>
+                            </div>
+                        </div>
+
+                        <!-- Staged changes -->
+                        <div class="git-section" id="git-staged-section" hidden>
+                            <div class="git-section-header" data-target="git-staged-body">
+                                <svg class="git-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                                <span>Cambios preparados</span>
+                                <span class="git-count-badge" id="git-staged-count">0</span>
+                                <button type="button" class="git-inline-btn" id="git-unstage-all-btn" title="Quitar todos del stage">−</button>
+                            </div>
+                            <div class="git-section-body" id="git-staged-body">
+                                <div class="git-file-list" id="git-staged-list"></div>
+                            </div>
+                        </div>
+
+                        <!-- Commit box -->
+                        <div class="git-section git-commit-section" id="git-commit-section" hidden>
+                            <textarea id="git-commit-msg" class="git-commit-input" placeholder="Mensaje del commit…" rows="2" spellcheck="false"></textarea>
+                            <div class="git-row-actions">
+                                <label class="git-check-label" title="Modificar el último commit">
+                                    <input type="checkbox" id="git-amend-check" />
+                                    <span>Amend</span>
+                                </label>
+                                <button type="button" class="git-btn git-btn-primary" id="git-commit-btn">
+                                    Commit
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Unstaged changes -->
+                        <div class="git-section" id="git-unstaged-section" hidden>
+                            <div class="git-section-header" data-target="git-unstaged-body">
+                                <svg class="git-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                                <span>Cambios sin preparar</span>
+                                <span class="git-count-badge" id="git-unstaged-count">0</span>
+                                <button type="button" class="git-inline-btn" id="git-stage-all-btn" title="Añadir todos al stage">+</button>
+                            </div>
+                            <div class="git-section-body" id="git-unstaged-body">
+                                <div class="git-file-list" id="git-unstaged-list"></div>
+                            </div>
+                        </div>
+
+                        <!-- Untracked -->
+                        <div class="git-section" id="git-untracked-section" hidden>
+                            <div class="git-section-header" data-target="git-untracked-body">
+                                <svg class="git-section-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                                <span>Sin seguimiento</span>
+                                <span class="git-count-badge" id="git-untracked-count">0</span>
+                            </div>
+                            <div class="git-section-body" id="git-untracked-body">
+                                <div class="git-file-list" id="git-untracked-list"></div>
+                            </div>
+                        </div>
+
+                        <!-- Recent commits -->
+                        <div class="git-section" id="git-log-section" hidden>
+                            <div class="git-section-header" data-target="git-log-body">
+                                <svg class="git-section-chevron git-section-chevron--collapsed" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                                <span>Historial</span>
+                            </div>
+                            <div class="git-section-body git-section-body--collapsed" id="git-log-body">
+                                <div class="git-log-list" id="git-log-list"></div>
+                                <button type="button" class="git-link-btn" id="git-log-more-btn" hidden>Ver más</button>
+                            </div>
+                        </div>
+
+                        <!-- Diff viewer -->
+                        <div class="git-diff-viewer" id="git-diff-viewer" hidden>
+                            <div class="git-diff-header">
+                                <span class="git-diff-filename" id="git-diff-filename"></span>
+                                <button type="button" class="git-icon-btn" id="git-diff-close">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <pre class="git-diff-content" id="git-diff-content"></pre>
+                        </div>
+
+                    </div>
+                </div>
+
                 <!-- Footer: connection status -->
                 <div class="side-panel-footer">
                     <div class="connection-status" id="connection-status">
@@ -615,6 +825,7 @@
     <script src="/static/js/plan.js"></script>
     <script src="/static/js/mcp.js"></script>
     <script src="/static/js/explorer.js"></script>
+    <script src="/static/js/git.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
 </html>

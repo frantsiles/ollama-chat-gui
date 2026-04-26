@@ -184,7 +184,8 @@ const Explorer = {
         this.currentPath = path;
         this._updateWorkspaceBar(path);
         if (window.FileWatcher) FileWatcher.onWorkspaceChange(path);
-        if (window.GitStatus) GitStatus.onWorkspaceChange(path);
+        if (window.GitStatus)  GitStatus.onWorkspaceChange(path);
+        if (window.GitPanel)   GitPanel.onWorkspaceChange(path);
 
         // Reload tree root
         const tree = document.getElementById('file-tree');
@@ -613,7 +614,8 @@ const Explorer = {
                 });
                 Utils.showToast('Workspace actualizado: ' + path, 'success');
                 if (window.FileWatcher) FileWatcher.onWorkspaceChange(path);
-                if (window.GitStatus) GitStatus.onWorkspaceChange(path);
+                if (window.GitStatus)  GitStatus.onWorkspaceChange(path);
+                if (window.GitPanel)   GitPanel.onWorkspaceChange(path);
                 // Navigate tree to new workspace
                 const tree = document.getElementById('file-tree');
                 if (tree) this._loadTree(path, tree, 0);
@@ -1772,9 +1774,12 @@ const FileWatcher = {
             if (SearchPanel._input?.value.trim()) {
                 SearchPanel._search();
             }
-            // Re-poll git status after file changes
+            // Re-poll git status and panel after file changes
             if (window.GitStatus && Explorer.workspacePath) {
                 GitStatus.onWorkspaceChange(Explorer.workspacePath);
+            }
+            if (window.GitPanel && Explorer.workspacePath) {
+                GitPanel.refresh();
             }
         }, this._DEBOUNCE_MS);
     },

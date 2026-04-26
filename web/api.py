@@ -730,63 +730,431 @@ async def read_file_content(path: str) -> Dict[str, Any]:
 
 
 # =============================================================================
-# Git Status
+# Git helpers
 # =============================================================================
 
-@router.get("/git/status")
-async def git_status(path: str = "") -> Dict[str, Any]:
-    """
-    Runs `git status --porcelain` in *path* and returns a map of
-    relative_path → status_code  (e.g. "M", "A", "D", "?", "R", "C", "U").
-    Returns an empty map if the directory is not a git repo.
-    """
+async def _git(args: list[str], cwd: str, timeout: float = 8.0) -> tuple[int, str, str]:
+    """Run a git command, return (returncode, stdout, stderr)."""
     import asyncio
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", *args,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return proc.returncode, stdout.decode(errors="replace"), stderr.decode(errors="replace")
+    except FileNotFoundError:
+        return -1, "", "git not found"
+    except asyncio.TimeoutError:
+        return -1, "", "timeout"
 
+
+def _resolve_repo(path: str) -> Path:
     if not path:
-        return {"files": {}, "is_git": False}
-
+        raise HTTPException(status_code=400, detail="path requerido")
     try:
         root = Path(path).expanduser().resolve()
     except Exception:
         raise HTTPException(status_code=400, detail="Ruta inválida")
-
     if not root.is_dir():
         raise HTTPException(status_code=400, detail="La ruta no es un directorio")
+    return root
 
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "git", "status", "--porcelain", "-u",
-            cwd=str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
-    except FileNotFoundError:
-        return {"files": {}, "is_git": False, "error": "git not found"}
-    except asyncio.TimeoutError:
-        return {"files": {}, "is_git": False, "error": "git timeout"}
 
-    if proc.returncode == 128:          # not a git repo
+# =============================================================================
+# Git Status  (for tree badge overlay — kept for backward compat)
+# =============================================================================
+
+@router.get("/git/status")
+async def git_status(path: str = "") -> Dict[str, Any]:
+    """Porcelain status map for tree badge overlay."""
+    if not path:
         return {"files": {}, "is_git": False}
+    root = _resolve_repo(path)
+    rc, stdout, _ = await _git(["status", "--porcelain", "-u"], str(root))
+    if rc == 128 or rc == -1:
+        return {"files": {}, "is_git": rc != -1 and "not found" not in _}
 
     files: dict[str, str] = {}
-    for line in stdout.decode(errors="replace").splitlines():
+    for line in stdout.splitlines():
         if len(line) < 4:
             continue
-        xy = line[:2]
-        rel = line[3:]
-        # For renames: "R old -> new" — track the new name
+        xy, rel = line[:2], line[3:]
         if " -> " in rel:
             rel = rel.split(" -> ", 1)[1]
         rel = rel.strip().strip('"')
-        # Determine single-letter badge: prioritise index status, fall back to worktree
         x, y = xy[0], xy[1]
         badge = x if x != " " else y
         if badge == "?":
-            badge = "U"   # Untracked shown as U
+            badge = "U"
         files[rel] = badge
-
     return {"files": files, "is_git": True}
+
+
+# =============================================================================
+# Git Info  (branch, remote, user, ahead/behind)
+# =============================================================================
+
+@router.get("/git/info")
+async def git_info(path: str = "") -> Dict[str, Any]:
+    """Full repo info: branch, remote, user identity, ahead/behind."""
+    if not path:
+        return {"is_git": False}
+    root = _resolve_repo(path)
+
+    # Check if git repo
+    rc, _, _ = await _git(["rev-parse", "--git-dir"], str(root))
+    if rc != 0:
+        return {"is_git": False}
+
+    async def _get(args: list[str]) -> str:
+        _, out, _ = await _git(args, str(root))
+        return out.strip()
+
+    branch      = await _get(["rev-parse", "--abbrev-ref", "HEAD"])
+    user_name   = await _get(["config", "user.name"])
+    user_email  = await _get(["config", "user.email"])
+    remote_url  = await _get(["config", "--get", "remote.origin.url"])
+
+    # Ahead / behind vs origin
+    ahead = behind = 0
+    rc2, rev, _ = await _git(["rev-list", "--left-right", "--count",
+                               f"HEAD...origin/{branch}"], str(root))
+    if rc2 == 0:
+        parts = rev.strip().split()
+        if len(parts) == 2:
+            ahead, behind = int(parts[0]), int(parts[1])
+
+    # Last commit info
+    rc3, log, _ = await _git(
+        ["log", "-1", "--pretty=format:%H|%s|%an|%ar"],
+        str(root),
+    )
+    last_commit: dict | None = None
+    if rc3 == 0 and log:
+        h, subj, author, rel_time = (log.split("|") + ["", "", "", ""])[:4]
+        last_commit = {"hash": h[:8], "subject": subj, "author": author, "time": rel_time}
+
+    # Stash count
+    _, stash_out, _ = await _git(["stash", "list"], str(root))
+    stash_count = len([l for l in stash_out.splitlines() if l])
+
+    return {
+        "is_git": True,
+        "branch": branch,
+        "user_name": user_name,
+        "user_email": user_email,
+        "remote_url": remote_url,
+        "ahead": ahead,
+        "behind": behind,
+        "last_commit": last_commit,
+        "stash_count": stash_count,
+    }
+
+
+# =============================================================================
+# Git Changes  (staged + unstaged file list)
+# =============================================================================
+
+@router.get("/git/changes")
+async def git_changes(path: str = "") -> Dict[str, Any]:
+    """Staged and unstaged changes, plus untracked files."""
+    if not path:
+        return {"is_git": False, "staged": [], "unstaged": [], "untracked": []}
+    root = _resolve_repo(path)
+
+    rc, stdout, _ = await _git(["status", "--porcelain", "-u"], str(root))
+    if rc != 0:
+        return {"is_git": False, "staged": [], "unstaged": [], "untracked": []}
+
+    staged, unstaged, untracked = [], [], []
+    for line in stdout.splitlines():
+        if len(line) < 4:
+            continue
+        x, y = line[0], line[1]
+        rel = line[3:]
+        if " -> " in rel:
+            old, rel = rel.split(" -> ", 1)
+        rel = rel.strip().strip('"')
+
+        if x == "?" and y == "?":
+            untracked.append({"path": rel, "x": "?", "y": "?"})
+            continue
+        if x != " " and x != "?":
+            staged.append({"path": rel, "x": x, "y": y})
+        if y != " " and y != "?":
+            unstaged.append({"path": rel, "x": x, "y": y})
+
+    return {"is_git": True, "staged": staged, "unstaged": unstaged, "untracked": untracked}
+
+
+# =============================================================================
+# Git Diff
+# =============================================================================
+
+@router.get("/git/diff")
+async def git_diff(path: str = "", file: str = "", staged: bool = False) -> Dict[str, Any]:
+    """Unified diff for a single file (staged or working-tree)."""
+    if not path or not file:
+        raise HTTPException(status_code=400, detail="path y file requeridos")
+    root = _resolve_repo(path)
+    args = ["diff", "--unified=4"]
+    if staged:
+        args.append("--cached")
+    args.append("--")
+    args.append(file)
+    rc, diff_out, _ = await _git(args, str(root))
+    return {"diff": diff_out, "file": file, "staged": staged}
+
+
+# =============================================================================
+# Git Log
+# =============================================================================
+
+@router.get("/git/log")
+async def git_log(path: str = "", n: int = 20) -> Dict[str, Any]:
+    """Recent commits."""
+    if not path:
+        return {"is_git": False, "commits": []}
+    root = _resolve_repo(path)
+    n = min(max(1, n), 100)
+    rc, out, _ = await _git(
+        ["log", f"-{n}", "--pretty=format:%H|%s|%an|%ae|%ar|%d"],
+        str(root),
+    )
+    if rc != 0:
+        return {"is_git": False, "commits": []}
+    commits = []
+    for line in out.splitlines():
+        parts = (line.split("|") + [""] * 6)[:6]
+        commits.append({
+            "hash": parts[0][:8], "full_hash": parts[0],
+            "subject": parts[1], "author": parts[2],
+            "email": parts[3], "time": parts[4], "refs": parts[5].strip(),
+        })
+    return {"is_git": True, "commits": commits}
+
+
+# =============================================================================
+# Git Actions (init, stage, unstage, commit, push, pull, discard)
+# =============================================================================
+
+class GitPathBody(BaseModel):
+    path: str
+    files: list[str] = []
+
+class GitCommitBody(BaseModel):
+    path: str
+    message: str
+    amend: bool = False
+
+class GitPushPullBody(BaseModel):
+    path: str
+    remote: str = "origin"
+    branch: str = ""
+    set_upstream: bool = False
+
+class GitRemoteAddBody(BaseModel):
+    path: str
+    name: str = "origin"
+    url: str = ""
+
+class GitInitBody(BaseModel):
+    path: str
+
+class GitConfigBody(BaseModel):
+    path: str          # repo path
+    user_name: str = ""
+    user_email: str = ""
+
+
+@router.post("/git/init")
+async def git_init(body: GitInitBody) -> Dict[str, Any]:
+    root = _resolve_repo(body.path)
+    rc, out, err = await _git(["init"], str(root))
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=err.strip() or "Error al inicializar")
+    return {"message": out.strip() or "Repositorio inicializado", "path": str(root)}
+
+
+@router.post("/git/stage")
+async def git_stage(body: GitPathBody) -> Dict[str, Any]:
+    root = _resolve_repo(body.path)
+    files = body.files or ["."]
+    rc, _, err = await _git(["add", "--"] + files, str(root))
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=err.strip())
+    return {"staged": files}
+
+
+@router.post("/git/unstage")
+async def git_unstage(body: GitPathBody) -> Dict[str, Any]:
+    root = _resolve_repo(body.path)
+    files = body.files or ["."]
+    rc, _, err = await _git(["restore", "--staged", "--"] + files, str(root))
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=err.strip())
+    return {"unstaged": files}
+
+
+@router.post("/git/discard")
+async def git_discard(body: GitPathBody) -> Dict[str, Any]:
+    """Discard working-tree changes (restore file to HEAD)."""
+    root = _resolve_repo(body.path)
+    files = body.files
+    if not files:
+        raise HTTPException(status_code=400, detail="Especifica al menos un archivo")
+    rc, _, err = await _git(["restore", "--"] + files, str(root))
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=err.strip())
+    return {"discarded": files}
+
+
+@router.post("/git/commit")
+async def git_commit(body: GitCommitBody) -> Dict[str, Any]:
+    root = _resolve_repo(body.path)
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío")
+    args = ["commit", "-m", body.message]
+    if body.amend:
+        args.append("--amend")
+    rc, out, err = await _git(args, str(root))
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=err.strip() or out.strip())
+    return {"message": out.strip()}
+
+
+@router.post("/git/remote/add")
+async def git_remote_add(body: GitRemoteAddBody) -> Dict[str, Any]:
+    if not body.url:
+        raise HTTPException(status_code=400, detail="URL requerida")
+    root = _resolve_repo(body.path)
+    rc, out, err = await _git(["remote", "add", body.name, body.url], str(root))
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=(err or out).strip())
+    return {"message": f"Remote '{body.name}' añadido"}
+
+
+@router.post("/git/remote/set-url")
+async def git_remote_set_url(body: GitRemoteAddBody) -> Dict[str, Any]:
+    if not body.url:
+        raise HTTPException(status_code=400, detail="URL requerida")
+    root = _resolve_repo(body.path)
+    rc, out, err = await _git(["remote", "set-url", body.name, body.url], str(root))
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=(err or out).strip())
+    return {"message": f"URL de remote '{body.name}' actualizada"}
+
+
+@router.post("/git/remote/remove")
+async def git_remote_remove(body: GitRemoteAddBody) -> Dict[str, Any]:
+    root = _resolve_repo(body.path)
+    rc, out, err = await _git(["remote", "remove", body.name], str(root))
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=(err or out).strip())
+    return {"message": f"Remote '{body.name}' eliminado"}
+
+
+@router.post("/git/push")
+async def git_push(body: GitPushPullBody) -> Dict[str, Any]:
+    root = _resolve_repo(body.path)
+    # Detect current branch if needed for set-upstream
+    branch = body.branch
+    if body.set_upstream and not branch:
+        rc_b, branch_out, _ = await _git(["rev-parse", "--abbrev-ref", "HEAD"], str(root))
+        branch = branch_out.strip() if rc_b == 0 else "HEAD"
+
+    args = ["push"]
+    if body.set_upstream:
+        args += ["--set-upstream", body.remote, branch]
+    else:
+        args.append(body.remote)
+        if branch:
+            args.append(branch)
+
+    rc, out, err = await _git(args, str(root), timeout=30.0)
+    if rc != 0:
+        msg = (err or out).strip()
+        # Detect no upstream branch error
+        if "no upstream branch" in msg or "has no upstream branch" in msg:
+            rc_b, branch_out, _ = await _git(["rev-parse", "--abbrev-ref", "HEAD"], str(root))
+            cur_branch = branch_out.strip() if rc_b == 0 else "HEAD"
+            raise HTTPException(status_code=422,
+                                detail={"error": "no_upstream", "branch": cur_branch, "message": msg})
+        # Detect remote repository not found
+        if "repository" in msg.lower() and "not found" in msg.lower():
+            raise HTTPException(status_code=422,
+                                detail={"error": "repo_not_found", "message": msg})
+        raise HTTPException(status_code=500, detail=msg)
+    return {"message": (out or err).strip()}
+
+
+@router.post("/git/pull")
+async def git_pull(body: GitPushPullBody) -> Dict[str, Any]:
+    root = _resolve_repo(body.path)
+    args = ["pull", body.remote]
+    if body.branch:
+        args.append(body.branch)
+    rc, out, err = await _git(args, str(root), timeout=30.0)
+    if rc != 0:
+        raise HTTPException(status_code=500, detail=(err or out).strip())
+    return {"message": (out or err).strip()}
+
+
+class GitHubCreateRepoBody(BaseModel):
+    token: str
+    name: str
+    private: bool = True
+    description: str = ""
+
+
+@router.post("/github/create-repo")
+async def github_create_repo(body: GitHubCreateRepoBody) -> Dict[str, Any]:
+    """Create a new GitHub repository using the GitHub API."""
+    import httpx
+    if not body.token:
+        raise HTTPException(status_code=400, detail="Token de GitHub requerido")
+    if not body.name:
+        raise HTTPException(status_code=400, detail="Nombre del repositorio requerido")
+
+    payload = {"name": body.name, "private": body.private, "description": body.description, "auto_init": False}
+    headers = {"Authorization": f"token {body.token}", "Accept": "application/vnd.github.v3+json"}
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post("https://api.github.com/user/repos", json=payload, headers=headers)
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Error de red: {e}")
+
+    if resp.status_code == 201:
+        data = resp.json()
+        return {"html_url": data["html_url"], "clone_url": data["clone_url"], "ssh_url": data["ssh_url"]}
+    elif resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="Token inválido o sin permisos")
+    elif resp.status_code == 422:
+        msg = resp.json().get("message", "El repositorio ya existe o nombre inválido")
+        raise HTTPException(status_code=422, detail=msg)
+    else:
+        raise HTTPException(status_code=resp.status_code, detail=resp.text[:200])
+
+
+@router.post("/git/config")
+async def git_config_set(body: GitConfigBody) -> Dict[str, Any]:
+    """Set local user.name and/or user.email."""
+    root = _resolve_repo(body.path)
+    updated = []
+    if body.user_name:
+        rc, _, err = await _git(["config", "user.name", body.user_name], str(root))
+        if rc != 0:
+            raise HTTPException(status_code=500, detail=err.strip())
+        updated.append("user.name")
+    if body.user_email:
+        rc, _, err = await _git(["config", "user.email", body.user_email], str(root))
+        if rc != 0:
+            raise HTTPException(status_code=500, detail=err.strip())
+        updated.append("user.email")
+    return {"updated": updated}
 
 
 # =============================================================================
