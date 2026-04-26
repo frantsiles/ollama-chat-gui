@@ -151,10 +151,12 @@ const Sidebar = {
             this.modelSelect.innerHTML = '';
 
             if (data.models && data.models.length > 0) {
+                App.state.modelCapabilities = {};
                 data.models.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model.name;
                     option.textContent = model.name;
+                    App.state.modelCapabilities[model.name] = model.capabilities || [];
 
                     // Show capabilities hint
                     if (model.capabilities && model.capabilities.includes('tools')) {

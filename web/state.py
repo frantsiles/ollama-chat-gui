@@ -75,6 +75,7 @@ class Session:
                     "role": msg.role.value,
                     "content": msg.content,
                     "timestamp": msg.timestamp.isoformat(),
+                    "attachments": msg.attachments,
                 })
         return messages
     

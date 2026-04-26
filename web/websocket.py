@@ -128,9 +128,19 @@ async def handle_chat_message(
 
     attachments_raw = data.get("attachments", [])
     images = data.get("images", [])
+    image_names = data.get("image_names", [])
 
     # --- Inyectar adjuntos en el contenido del mensaje ---
     content = await _build_full_content(raw_content, attachments_raw)
+
+    # Etiquetas para persistir en Message.attachments y mostrarlas en el chat.
+    attachment_labels: list = []
+    for att in attachments_raw:
+        if isinstance(att, dict) and att.get("name"):
+            attachment_labels.append(f"📎 {att['name']}")
+    for name in image_names:
+        if name:
+            attachment_labels.append(f"🖼️ {name}")
 
     # --- Cola por sesión: evitar ejecuciones concurrentes ---
     lock = SessionManager.get_lock(session.id)
@@ -199,7 +209,7 @@ async def handle_chat_message(
                     agent.chat,
                     content,
                     session.conversation,
-                    [],
+                    attachment_labels,
                     images,
                 )
 
@@ -216,7 +226,7 @@ async def handle_chat_message(
                         lambda: agent.run(
                             content,
                             session.conversation,
-                            [],
+                            attachment_labels,
                             images,
                             step_callback,
                             cancel_check,

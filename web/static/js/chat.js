@@ -54,6 +54,9 @@ const Chat = {
             }
         });
 
+        // Clipboard paste: capture screenshots and files alongside text.
+        this.inputEl.addEventListener('paste', (e) => this.handlePaste(e));
+
         // Attach button
         this.attachBtn.addEventListener('click', () => {
             this.fileInput.click();
@@ -249,11 +252,16 @@ const Chat = {
         // Hide welcome message
         this.hideWelcome();
 
+        // Snapshot attachments before they're cleared, so the rendered bubble
+        // keeps owning their previewUrls.
+        const sentAttachments = this.attachments.slice();
+
         // Render user message
         this.renderMessage({
             role: 'user',
             content,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            attachments: sentAttachments,
         });
 
         // Clear input
@@ -261,12 +269,29 @@ const Chat = {
         Utils.autoResizeTextarea(this.inputEl);
         this.updateSendButton();
 
+        // Split attachments into text (file content) and images (base64).
+        const textAtts = this.attachments
+            .filter(a => a.kind === 'text')
+            .map(({ name, content, size }) => ({ name, content, size }));
+        const imageAtts = this.attachments
+            .filter(a => a.kind === 'image')
+            .map(a => a.base64);
+        const imageNames = this.attachments
+            .filter(a => a.kind === 'image')
+            .map(a => a.name);
+
         // Send via WebSocket
         const mode = App.state.mode;
         if (mode === 'chat') {
-            wsManager.sendStreamChat(content);
+            // Stream chat doesn't carry attachments yet; fall back to non-stream
+            // when there's anything attached so files/images aren't dropped.
+            if (textAtts.length || imageAtts.length) {
+                wsManager.sendChat(content, textAtts, imageAtts, imageNames);
+            } else {
+                wsManager.sendStreamChat(content);
+            }
         } else {
-            wsManager.sendChat(content, this.attachments);
+            wsManager.sendChat(content, textAtts, imageAtts, imageNames);
         }
 
         // Clear attachments
@@ -302,8 +327,60 @@ const Chat = {
             bodyEl.addEventListener('dblclick', () => this._enterEditMode(bodyEl));
         }
 
+        // Attachments rendered inside the bubble.
+        const atts = msg.attachments;
+        if (atts && atts.length) {
+            const contentEl = messageEl.querySelector('.message-content');
+            contentEl.appendChild(this._renderMessageAttachments(atts));
+        }
+
         this.messagesEl.appendChild(messageEl);
         this.scrollToBottom();
+    },
+
+    /**
+     * Build an attachments strip for a rendered message.
+     * Accepts attachments in two shapes:
+     *  - rich (fresh send): { kind, name, previewUrl?, base64? }
+     *  - lean (server reload): a string filename, optionally prefixed with 🖼️
+     */
+    _renderMessageAttachments(atts) {
+        const strip = document.createElement('div');
+        strip.className = 'message-attachments';
+
+        for (const raw of atts) {
+            const att = typeof raw === 'string'
+                ? this._parseLeanAttachment(raw)
+                : raw;
+
+            const chip = document.createElement('div');
+            chip.className = 'message-attachment'
+                + (att.kind === 'image' ? ' message-attachment-image' : '');
+
+            if (att.kind === 'image' && (att.previewUrl || att.base64)) {
+                const img = document.createElement('img');
+                img.src = att.previewUrl
+                    || `data:image/png;base64,${att.base64}`;
+                img.alt = att.name || '';
+                img.className = 'message-attachment-thumb';
+                chip.appendChild(img);
+            }
+
+            const label = document.createElement('span');
+            label.className = 'message-attachment-name';
+            label.textContent = (att.kind === 'image' ? '🖼️ ' : '📎 ')
+                + (att.name || 'archivo');
+            chip.appendChild(label);
+
+            strip.appendChild(chip);
+        }
+        return strip;
+    },
+
+    _parseLeanAttachment(name) {
+        const isImage = /^🖼️/.test(name) || /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name);
+        const cleanName = name.replace(/^🖼️\s*/, '').replace(/^📎\s*/, '');
+        return { kind: isImage ? 'image' : 'text', name: cleanName };
     },
 
     /**
@@ -547,50 +624,142 @@ const Chat = {
     },
 
     /**
-     * Handle file selection
+     * Returns true if the active model declares vision support.
+     */
+    modelSupportsVision() {
+        const model = App.state.model;
+        const caps = (App.state.modelCapabilities || {})[model] || [];
+        return caps.includes('vision');
+    },
+
+    /**
+     * Handle file selection (from picker, drag-drop or clipboard).
      */
     async handleFileSelect(files) {
         for (const file of files) {
-            if (file.size > 10 * 1024 * 1024) {
-                Utils.showToast('Archivo demasiado grande (max 10MB)', 'error');
-                continue;
-            }
+            await this.addFileAttachment(file);
+        }
+    },
 
-            try {
+    /**
+     * Read a single File/Blob and push it into `this.attachments`,
+     * splitting between image (base64) and text (utf-8) flavours.
+     */
+    async addFileAttachment(file) {
+        if (file.size > 10 * 1024 * 1024) {
+            Utils.showToast(`Archivo demasiado grande (max 10MB): ${file.name || 'sin nombre'}`, 'error');
+            return;
+        }
+
+        const isImage = (file.type || '').startsWith('image/');
+        const name = file.name || (isImage
+            ? `screenshot-${Date.now()}.${(file.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`
+            : `file-${Date.now()}`);
+
+        try {
+            if (isImage) {
+                if (!this.modelSupportsVision()) {
+                    Utils.showToast(
+                        `El modelo actual no soporta imágenes. ${name} se ignoró.`,
+                        'info'
+                    );
+                    return;
+                }
+                const base64 = await Utils.readFileAsBase64(file);
+                const att = {
+                    kind: 'image',
+                    name,
+                    base64,
+                    size: file.size,
+                    previewUrl: URL.createObjectURL(file)
+                };
+                this.attachments.push(att);
+                this.renderAttachment(att);
+            } else {
                 const content = await Utils.readFileAsText(file);
-                this.attachments.push({
-                    name: file.name,
+                const att = {
+                    kind: 'text',
+                    name,
                     content,
                     size: file.size
-                });
-                this.renderAttachment(file.name);
-            } catch (error) {
-                Utils.showToast(`Error al leer ${file.name}`, 'error');
+                };
+                this.attachments.push(att);
+                this.renderAttachment(att);
             }
+        } catch (error) {
+            Utils.showToast(`Error al leer ${name}`, 'error');
+        }
+    },
+
+    /**
+     * Capture pasted images / files from the clipboard.
+     * Lets plain text paste through untouched so the textarea behaves normally.
+     */
+    async handlePaste(event) {
+        const cd = event.clipboardData;
+        if (!cd) return;
+
+        const items = Array.from(cd.items || []);
+        const files = [];
+
+        // `items` is the richest source: it covers screenshots that arrive as
+        // `image/png` blobs without ever appearing in `files`.
+        for (const item of items) {
+            if (item.kind === 'file') {
+                const f = item.getAsFile();
+                if (f) files.push(f);
+            }
+        }
+        // Fallback / drag-drop style sources expose `files` directly.
+        if (files.length === 0 && cd.files && cd.files.length) {
+            for (const f of cd.files) files.push(f);
+        }
+
+        if (files.length === 0) return;  // pure text paste — let the browser handle it
+
+        // We're handling at least one file: prevent the binary noise (e.g. base64
+        // image data) from also being inserted as text into the textarea.
+        event.preventDefault();
+        for (const f of files) {
+            await this.addFileAttachment(f);
         }
     },
 
     /**
      * Render attachment preview
      */
-    renderAttachment(name) {
+    renderAttachment(att) {
         const item = document.createElement('div');
-        item.className = 'attachment-item';
-        item.innerHTML = `
-            <span>📎 ${name}</span>
-            <button class="attachment-remove" data-name="${name}">×</button>
-        `;
+        item.className = 'attachment-item' + (att.kind === 'image' ? ' attachment-image' : '');
 
-        item.querySelector('.attachment-remove').onclick = () => {
-            this.attachments = this.attachments.filter(a => a.name !== name);
+        if (att.kind === 'image') {
+            const img = document.createElement('img');
+            img.src = att.previewUrl;
+            img.alt = att.name;
+            img.className = 'attachment-thumb';
+            item.appendChild(img);
+        }
+
+        const label = document.createElement('span');
+        label.textContent = (att.kind === 'image' ? '🖼️ ' : '📎 ') + att.name;
+        item.appendChild(label);
+
+        const removeBtn = document.createElement('button');
+        removeBtn.className = 'attachment-remove';
+        removeBtn.textContent = '×';
+        removeBtn.onclick = () => {
+            if (att.previewUrl) URL.revokeObjectURL(att.previewUrl);
+            this.attachments = this.attachments.filter(a => a !== att);
             item.remove();
         };
+        item.appendChild(removeBtn);
 
         this.attachmentsPreview.appendChild(item);
     },
 
     /**
-     * Clear attachments
+     * Clear attachments staging area (does NOT revoke previewUrls — the
+     * caller is expected to have transferred ownership to a rendered bubble).
      */
     clearAttachments() {
         this.attachments = [];

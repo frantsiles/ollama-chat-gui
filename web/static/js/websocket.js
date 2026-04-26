@@ -138,12 +138,13 @@ class WebSocketManager {
     /**
      * Send chat message
      */
-    sendChat(content, attachments = [], images = []) {
+    sendChat(content, attachments = [], images = [], imageNames = []) {
         return this.send({
             type: 'chat',
             content,
             attachments,
-            images
+            images,
+            image_names: imageNames
         });
     }
 

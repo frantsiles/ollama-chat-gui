@@ -8,7 +8,8 @@ const App = {
         mode: 'agent',
         model: '',
         sessionId: null,
-        isConnected: false
+        isConnected: false,
+        modelCapabilities: {}
     },
 
     /**
