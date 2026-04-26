@@ -9,9 +9,30 @@ Ante cualquier fallo retorna `{"needs_tool": False}` para no romper el flujo.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any, Callable, Dict, List, Optional
 
 from llm.prompts import NATURAL_PARSER_PROMPT, PromptManager
+
+# Palabras clave que indican intención de escribir/crear un archivo
+_WRITE_INTENT_PATTERNS = re.compile(
+    r'\b(voy a (escribir|crear|implementar|guardar)|'
+    r'escribiré|crearé|implementaré|'
+    r'write_file|escribiendo|creando el archivo|'
+    r'aquí (está|tienes) (el|la implementación|el contenido|el archivo))\b',
+    re.IGNORECASE,
+)
+
+# Detecta rutas de archivo con extensión comunes
+_FILE_PATH_PATTERN = re.compile(
+    r'\b([\w/\-\.]+\.(?:py|js|ts|json|yaml|yml|md|txt|sh|html|css|java|go|rs|cpp|c|h))\b'
+)
+
+# Extrae el primer bloque de código de una respuesta
+_CODE_BLOCK_PATTERN = re.compile(
+    r'```(?:\w+)?\n(.*?)```',
+    re.DOTALL,
+)
 
 
 class NaturalResponseParser:
@@ -35,11 +56,87 @@ class NaturalResponseParser:
     def parse(self, response: str) -> Dict[str, Any]:
         """Analiza una respuesta y retorna la intención detectada.
 
+        Primero aplica heurísticas rápidas (sin LLM). Si no hay señal clara,
+        delega al LLM parser como segunda opinión.
+
         Returns:
             {"needs_tool": False}
             o
             {"needs_tool": True, "tool": "<nombre>", "args": {...}}
         """
+        # 1. Heurística: bloque de código + intención de escribir archivo
+        heuristic = self._heuristic_write_file(response)
+        if heuristic:
+            return heuristic
+
+        # 2. Heurística: JSON directo de tool call embebido en la respuesta
+        inline = self._extract_inline_json_tool(response)
+        if inline:
+            return inline
+
+        # 3. Fallback: segunda llamada al LLM
+        return self._llm_parse(response)
+
+    # ------------------------------------------------------------------
+    # Heurísticas (sin LLM, O(1))
+    # ------------------------------------------------------------------
+
+    def _heuristic_write_file(self, response: str) -> Optional[Dict[str, Any]]:
+        """Detecta 'intención de escribir + bloque de código + nombre de archivo'."""
+        if not _WRITE_INTENT_PATTERNS.search(response):
+            return None
+
+        code_match = _CODE_BLOCK_PATTERN.search(response)
+        if not code_match:
+            return None
+
+        content = code_match.group(1)
+        if not content.strip():
+            return None
+
+        # Buscar el nombre de archivo más cercano al bloque de código
+        path = self._extract_file_path(response)
+        if not path:
+            return None
+
+        return {
+            "needs_tool": True,
+            "tool": "write_file",
+            "args": {"path": path, "content": content},
+        }
+
+    def _extract_file_path(self, text: str) -> Optional[str]:
+        """Extrae el nombre de archivo más probable del texto."""
+        matches = _FILE_PATH_PATTERN.findall(text)
+        if not matches:
+            return None
+        # Preferir el primero que no sea una URL ni un path de sistema
+        for m in matches:
+            if not m.startswith(("/usr", "/etc", "/bin", "http")):
+                return m
+        return matches[0]
+
+    def _extract_inline_json_tool(self, response: str) -> Optional[Dict[str, Any]]:
+        """Detecta si el modelo embebió un JSON de tool call directamente."""
+        # Buscar primer objeto JSON válido que tenga "tool" o "needs_tool"
+        for match in re.finditer(r'\{[^{}]*"(?:tool|needs_tool)"[^{}]*\}', response, re.DOTALL):
+            try:
+                data = json.loads(match.group(0))
+                if isinstance(data, dict) and ("tool" in data or "needs_tool" in data):
+                    # Normalizar al formato del parser
+                    if "needs_tool" not in data and "tool" in data:
+                        data["needs_tool"] = True
+                    return data
+            except json.JSONDecodeError:
+                continue
+        return None
+
+    # ------------------------------------------------------------------
+    # Fallback LLM
+    # ------------------------------------------------------------------
+
+    def _llm_parse(self, response: str) -> Dict[str, Any]:
+        """Delega al modelo secundario cuando las heurísticas no detectan nada."""
         parser_prompt = self._build_parser_prompt()
         messages = [
             {"role": "system", "content": parser_prompt},

@@ -660,6 +660,7 @@ class Agent:
         self,
         conversation: Conversation,
         approved: bool,
+        step_callback: Optional[Callable[[str], None]] = None,
     ) -> AgentResponse:
         """
         Continúa la ejecución después de una aprobación.
@@ -711,8 +712,9 @@ class Agent:
         
         # Continuar el ciclo
         return self.run(
-            user_input="",  # Continuar sin nuevo input
+            user_input="",
             conversation=conversation,
+            step_callback=step_callback,
         )
     
     # ------------------------------------------------------------------

@@ -195,6 +195,8 @@ const Chat = {
         });
 
         wsManager.on('approval_required', (data) => {
+            this.showTypingIndicator();
+            this.updateTypingStep('⏳ Esperando aprobación...');
             this.showApprovalModal(data.pending);
         });
 

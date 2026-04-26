@@ -421,7 +421,7 @@ async def handle_approval(
         })
         return
     
-    # Crear agente y continuar
+    # Crear agente y continuar (heredando contexto de la sesión)
     client = OllamaClient(base_url=OLLAMA_BASE_URL)
     agent = Agent(
         client=client,
@@ -431,8 +431,9 @@ async def handle_approval(
         temperature=session.temperature,
         mode=session.mode,
     )
-    
     agent.approval_manager.set_level(session.approval_level)
+    agent._context_summary = session.context_summary
+    agent._max_agent_steps = session.max_agent_steps
     
     pending_tool_data = session.pending_approval.get("tool_call_data")
     if not pending_tool_data:
@@ -445,13 +446,39 @@ async def handle_approval(
     tool_call = ToolCall.from_dict(pending_tool_data)
     agent.state.pending_approval = tool_call
     agent.approval_manager.request_approval(tool_call)
-    
+
+    await websocket.send_json({"type": "start", "mode": session.mode})
+
+    step_queue: asyncio.Queue = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def step_callback(msg: str) -> None:
+        loop.call_soon_threadsafe(step_queue.put_nowait, msg)
+
     try:
-        response = await asyncio.to_thread(
-            agent.resume_after_approval,
-            session.conversation,
-            approved,
+        agent_task = asyncio.create_task(
+            asyncio.to_thread(
+                lambda: agent.resume_after_approval(
+                    session.conversation,
+                    approved,
+                    step_callback=step_callback,
+                )
+            )
         )
+
+        while not agent_task.done():
+            try:
+                step_msg = step_queue.get_nowait()
+                await websocket.send_json({"type": "agent_step", "message": step_msg})
+            except asyncio.QueueEmpty:
+                await asyncio.sleep(0.1)
+        while not step_queue.empty():
+            step_msg = step_queue.get_nowait()
+            await websocket.send_json({"type": "agent_step", "message": step_msg})
+
+        if agent_task.exception():
+            raise agent_task.exception()
+        response = agent_task.result()
 
         session.pending_approval = None
 
