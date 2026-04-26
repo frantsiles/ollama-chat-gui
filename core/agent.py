@@ -39,6 +39,7 @@ class AgentResponse:
     error: Optional[str] = None
     trace: List[str] = field(default_factory=list)
     new_cwd: Optional[str] = None
+    token_usage: Optional[Dict[str, int]] = None
 
 
 class Agent:
@@ -93,6 +94,13 @@ class Agent:
         self._memory_store: Optional[Any] = None
         # Límite de pasos por sesión (sobreescribe MAX_AGENT_STEPS del config)
         self._max_agent_steps: Optional[int] = None
+        # Acumulador de tokens para la sesión actual
+        self._token_usage: Dict[str, int] = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "calls": 0,
+        }
 
         # Registrar herramientas MCP en el registry para el modo JSON-ReAct
         self._register_mcp_tools()
@@ -174,12 +182,21 @@ class Agent:
                 chunks.append(chunk)
             return "".join(chunks)
         else:
-            return self.client.chat(
+            result = self.client.chat(
                 model=self.model,
                 messages=messages,
                 options={"temperature": self.temperature},
                 fmt=fmt,
             )
+            usage = self.client.last_usage
+            if usage:
+                self._token_usage["prompt_tokens"] += usage.get("prompt_tokens", 0)
+                self._token_usage["completion_tokens"] += usage.get("completion_tokens", 0)
+                self._token_usage["total_tokens"] += usage.get("total_tokens", 0)
+                self._token_usage["calls"] += 1
+                self._token_usage["last_prompt"] = usage.get("prompt_tokens", 0)
+                self._token_usage["last_completion"] = usage.get("completion_tokens", 0)
+            return result
     
     # ------------------------------------------------------------------
     # Construcción de mensajes (delegada a ContextBuilder)
@@ -229,6 +246,95 @@ class Agent:
         
         return ToolRegistry.extract_tool_call(repaired)
     
+    # ------------------------------------------------------------------
+    # Pre-exploración automática del workspace
+    # ------------------------------------------------------------------
+
+    def _pre_explore_workspace(self, user_input: str) -> str:
+        """Lee automáticamente archivos clave del workspace antes del primer LLM call.
+
+        Busca y lee:
+        - README.md (si existe)
+        - Archivos .py que importan módulos mencionados en el input del usuario
+        - Los propios archivos .py mencionados en el input
+
+        Retorna un bloque de texto formateado listo para inyectar como contexto,
+        o "" si no encontró nada relevante.
+        """
+        import re
+
+        sections: list[str] = []
+
+        # 1. README
+        for readme_name in ("README.md", "README.rst", "README.txt", "readme.md"):
+            readme_path = self.workspace_root / readme_name
+            if readme_path.exists():
+                try:
+                    text = readme_path.read_text(encoding="utf-8", errors="replace")[:2000]
+                    if text.strip():
+                        sections.append(f"[{readme_name}]\n{text}")
+                except OSError:
+                    pass
+                break
+
+        # 2. Detectar archivos/módulos mencionados en el input
+        mentioned_py = re.findall(r'\b[\w\-/]+\.py\b', user_input)
+        module_stems: set[str] = {Path(f).stem for f in mentioned_py}
+
+        # 3. Leer los archivos .py mencionados directamente
+        for stem in set(module_stems):
+            for candidate in self.workspace_root.rglob(f"{stem}.py"):
+                if any(skip in candidate.parts for skip in (".git", ".venv", "venv", "__pycache__")):
+                    continue
+                try:
+                    text = candidate.read_text(encoding="utf-8", errors="replace")
+                    rel = candidate.relative_to(self.workspace_root)
+                    if text.strip():
+                        sections.append(f"[{rel}]\n{text[:3000]}")
+                except OSError:
+                    pass
+
+        # 4. Buscar archivos .py que importan esos módulos (dependientes directos)
+        found_importers: set[Path] = set()
+        try:
+            for py_file in self.workspace_root.rglob("*.py"):
+                if any(skip in py_file.parts for skip in (".git", ".venv", "venv", "__pycache__")):
+                    continue
+                try:
+                    content = py_file.read_text(encoding="utf-8", errors="replace")
+                    if any(
+                        f"import {stem}" in content or f"from {stem}" in content
+                        for stem in module_stems
+                    ):
+                        found_importers.add(py_file)
+                except OSError:
+                    pass
+        except OSError:
+            pass
+
+        for fp in sorted(found_importers)[:4]:
+            try:
+                text = fp.read_text(encoding="utf-8", errors="replace")
+                rel = fp.relative_to(self.workspace_root)
+                label = str(rel)
+                # No duplicar si ya está en sections (comparar cabecera exacta)
+                if any(s.startswith(f"[{label}]") for s in sections):
+                    continue
+                if text.strip():
+                    sections.append(f"[{rel}]\n{text[:3000]}")
+            except OSError:
+                pass
+
+        if not sections:
+            return ""
+
+        return (
+            "=== CONTEXTO AUTOMÁTICO DEL REPOSITORIO ===\n"
+            "Archivos leídos automáticamente del workspace antes de responder:\n\n"
+            + "\n\n---\n\n".join(sections)
+            + "\n\n=== FIN DEL CONTEXTO AUTOMÁTICO ==="
+        )
+
     # ------------------------------------------------------------------
     # Parser de respuestas naturales (delegado a NaturalResponseParser)
     # ------------------------------------------------------------------
@@ -356,8 +462,9 @@ class Agent:
         return AgentResponse(
             content=response,
             status="completed",
+            token_usage=dict(self._token_usage),
         )
-    
+
     def run(
         self,
         user_input: str,
@@ -430,8 +537,9 @@ class Agent:
             status="completed",
             trace=self.state.trace,
             new_cwd=str(self.current_cwd),
+            token_usage=dict(self._token_usage),
         )
-    
+
     # ------------------------------------------------------------------
     # Modo natural: texto libre → parser → tool (sin JSON forzado)
     # ------------------------------------------------------------------
@@ -451,6 +559,13 @@ class Agent:
         """
         from core.conversation.natural_loop import NaturalConversationLoop
         from llm.prompts import NATURAL_AGENT_SYSTEM_PROMPT
+
+        # Pre-exploración automática: inyecta archivos clave en el contexto
+        # antes de que el LLM empiece a razonar sobre la tarea.
+        pre_ctx = self._pre_explore_workspace(user_input)
+        if pre_ctx:
+            self.state.add_trace("Pre-exploración automática del workspace")
+            conversation.add_system_message(pre_ctx)
 
         # System prompt con snapshot del workspace embebido (fresco en cada run)
         self._context_builder.set_cwd(self.current_cwd)
@@ -490,6 +605,7 @@ class Agent:
                 trace=self.state.trace,
                 tool_results=result.tool_results,
                 new_cwd=str(self.current_cwd),
+                token_usage=dict(self._token_usage),
             )
 
         if result.status == "awaiting_approval":
@@ -503,6 +619,7 @@ class Agent:
                 trace=self.state.trace,
                 tool_results=result.tool_results,
                 new_cwd=str(self.current_cwd),
+                token_usage=dict(self._token_usage),
             )
 
         if result.status == "cancelled":
@@ -513,6 +630,7 @@ class Agent:
                 trace=self.state.trace,
                 tool_results=result.tool_results,
                 new_cwd=str(self.current_cwd),
+                token_usage=dict(self._token_usage),
             )
 
         if result.status == "error":
@@ -523,6 +641,7 @@ class Agent:
                 error=result.error,
                 trace=self.state.trace,
                 tool_results=result.tool_results,
+                token_usage=dict(self._token_usage),
             )
 
         # max_steps
@@ -534,6 +653,7 @@ class Agent:
             trace=self.state.trace,
             tool_results=result.tool_results,
             new_cwd=str(self.current_cwd),
+            token_usage=dict(self._token_usage),
         )
 
     def resume_after_approval(

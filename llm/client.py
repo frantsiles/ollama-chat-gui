@@ -25,6 +25,7 @@ class OllamaClient:
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.last_usage: Dict[str, int] = {}
     
     def list_models(self) -> List[str]:
         """Lista los modelos disponibles en Ollama."""
@@ -109,7 +110,16 @@ class OllamaClient:
         data = response.json()
         if "error" in data:
             raise OllamaClientError(str(data["error"]))
-        
+
+        prompt_tokens = data.get("prompt_eval_count", 0)
+        completion_tokens = data.get("eval_count", 0)
+        self.last_usage = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "duration_ms": data.get("total_duration", 0) // 1_000_000,
+        }
+
         return data.get("message", {}).get("content", "")
     
     def chat_stream(
@@ -227,11 +237,35 @@ class OllamaClient:
         if "error" in data:
             raise OllamaClientError(str(data["error"]))
 
+        prompt_tokens = data.get("prompt_eval_count", 0)
+        completion_tokens = data.get("eval_count", 0)
+        self.last_usage = {
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "duration_ms": data.get("total_duration", 0) // 1_000_000,
+        }
+
         message = data.get("message", {})
         return {
             "content": message.get("content", ""),
             "tool_calls": message.get("tool_calls", []),
         }
+
+    def get_context_length(self, model: str) -> int:
+        """Retorna el tamaño de la ventana de contexto del modelo, o 0 si no se puede determinar."""
+        try:
+            info = self.get_model_info(model)
+            for key, val in info.get("model_info", {}).items():
+                if "context_length" in key:
+                    return int(val)
+            for line in info.get("parameters", "").splitlines():
+                parts = line.split()
+                if parts and parts[0] == "num_ctx" and len(parts) >= 2:
+                    return int(parts[1])
+        except Exception:
+            pass
+        return 0
 
     def model_supports_tools(self, model: str) -> bool:
         """Verifica si el modelo soporta function calling nativo."""

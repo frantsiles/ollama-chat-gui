@@ -104,6 +104,13 @@
                         <line x1="3" y1="18" x2="3.01" y2="18"/>
                     </svg>
                 </button>
+                <button class="activity-btn" data-panel="context" title="Información del contexto">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="2" y="3" width="20" height="14" rx="2"/>
+                        <path d="M8 21h8M12 17v4"/>
+                        <path d="M7 8h10M7 12h6"/>
+                    </svg>
+                </button>
             </div>
 
             <!-- Side Panel -->
@@ -239,6 +246,54 @@
                             </div>
                         </div>
 
+                    </div>
+                </div>
+
+                <!-- ── CONTEXT Panel ── -->
+                <div class="panel" data-panel="context" id="panel-context">
+                    <div class="panel-title">Contexto</div>
+                    <div class="panel-body">
+                        <div class="ctx-empty" id="ctx-empty">
+                            Envía un mensaje para ver estadísticas de tokens.
+                        </div>
+                        <div class="ctx-stats" id="ctx-stats">
+                            <!-- Context window bar -->
+                            <div class="ctx-bar-section">
+                                <div class="ctx-bar-header">
+                                    <span class="ctx-bar-label">Ventana de contexto</span>
+                                    <span class="ctx-bar-pct" id="ctx-bar-pct">—</span>
+                                </div>
+                                <div class="ctx-bar-track">
+                                    <div class="ctx-bar-fill" id="ctx-bar-fill"></div>
+                                </div>
+                                <div class="ctx-bar-detail">
+                                    <span id="ctx-tokens-used">0</span> / <span id="ctx-tokens-max">?</span> tokens
+                                </div>
+                            </div>
+                            <!-- Stats grid -->
+                            <div class="ctx-grid">
+                                <div class="ctx-stat">
+                                    <div class="ctx-stat-label">Mensajes</div>
+                                    <div class="ctx-stat-value" id="ctx-msg-count">0</div>
+                                </div>
+                                <div class="ctx-stat">
+                                    <div class="ctx-stat-label">Llamadas LLM</div>
+                                    <div class="ctx-stat-value" id="ctx-llm-calls">0</div>
+                                </div>
+                                <div class="ctx-stat">
+                                    <div class="ctx-stat-label">Prompt (último)</div>
+                                    <div class="ctx-stat-value" id="ctx-last-prompt">—</div>
+                                </div>
+                                <div class="ctx-stat">
+                                    <div class="ctx-stat-label">Respuesta (último)</div>
+                                    <div class="ctx-stat-value" id="ctx-last-completion">—</div>
+                                </div>
+                                <div class="ctx-stat ctx-stat-wide">
+                                    <div class="ctx-stat-label">Total tokens (sesión)</div>
+                                    <div class="ctx-stat-value" id="ctx-total-tokens">0</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 

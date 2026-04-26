@@ -121,3 +121,114 @@
     color: var(--text-secondary);
     margin-bottom: 4px;
 }
+
+/* =============================================================================
+   Context Panel
+   ============================================================================= */
+
+.ctx-empty {
+    padding: var(--space-md);
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+    text-align: center;
+    line-height: 1.5;
+}
+
+.ctx-stats {
+    display: none;
+    flex-direction: column;
+    gap: var(--space-md);
+    padding: var(--space-sm);
+}
+
+.ctx-stats.visible {
+    display: flex;
+}
+
+/* Context window bar */
+.ctx-bar-section {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-md);
+    padding: var(--space-sm) var(--space-md);
+}
+
+.ctx-bar-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.ctx-bar-label {
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.ctx-bar-pct {
+    font-size: var(--text-xs);
+    font-weight: 600;
+    color: var(--accent-primary);
+    font-family: var(--font-mono);
+}
+
+.ctx-bar-track {
+    height: 6px;
+    background: var(--bg-primary);
+    border-radius: 3px;
+    overflow: hidden;
+    margin-bottom: 6px;
+}
+
+.ctx-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--accent-primary);
+    border-radius: 3px;
+    transition: width 0.4s ease, background-color 0.3s;
+}
+
+.ctx-bar-fill.warning {
+    background: var(--accent-warning);
+}
+
+.ctx-bar-fill.danger {
+    background: var(--accent-danger);
+}
+
+.ctx-bar-detail {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    font-family: var(--font-mono);
+    text-align: right;
+}
+
+/* Stats grid */
+.ctx-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: var(--space-sm);
+}
+
+.ctx-stat {
+    background: var(--bg-tertiary);
+    border-radius: var(--radius-sm);
+    padding: var(--space-sm) var(--space-md);
+}
+
+.ctx-stat-wide {
+    grid-column: span 2;
+}
+
+.ctx-stat-label {
+    font-size: 0.7rem;
+    color: var(--text-tertiary);
+    margin-bottom: 2px;
+}
+
+.ctx-stat-value {
+    font-size: var(--text-sm);
+    font-weight: 600;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+}

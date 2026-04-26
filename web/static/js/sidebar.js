@@ -11,6 +11,7 @@ const Sidebar = {
     workspacePath: null,
     approvalLevel: null,
     traceList: null,
+    _contextSize: 0,
 
     init() {
         this.modelSelect     = document.getElementById('model-select');
@@ -258,6 +259,73 @@ const Sidebar = {
     updateModelIndicator(model) {
         const el = document.getElementById('model-indicator');
         if (el) el.innerHTML = `Modelo: <strong>${model || '-'}</strong>`;
+        if (model) this._fetchContextSize(model);
+    },
+
+    _fetchContextSize(model) {
+        fetch(`/api/models/${encodeURIComponent(model)}/info`)
+            .then(r => r.json())
+            .then(data => {
+                let size = 0;
+                const info = data.info || {};
+                for (const [key, val] of Object.entries(info.model_info || {})) {
+                    if (key.includes('context_length')) { size = parseInt(val) || 0; break; }
+                }
+                if (!size) {
+                    for (const line of (info.parameters || '').split('\n')) {
+                        const parts = line.trim().split(/\s+/);
+                        if (parts[0] === 'num_ctx' && parts.length >= 2) {
+                            size = parseInt(parts[1]) || 0; break;
+                        }
+                    }
+                }
+                this._contextSize = size;
+                this._refreshContextBar();
+            })
+            .catch(() => {});
+    },
+
+    _refreshContextBar() {
+        const fill = document.getElementById('ctx-bar-fill');
+        const pct  = document.getElementById('ctx-bar-pct');
+        const max  = document.getElementById('ctx-tokens-max');
+        if (!fill) return;
+        const used = parseInt(document.getElementById('ctx-tokens-used')?.textContent?.replace(/,/g, '') || '0');
+        if (this._contextSize > 0 && used > 0) {
+            const p = Math.min(100, Math.round(used / this._contextSize * 100));
+            fill.style.width = p + '%';
+            fill.className = 'ctx-bar-fill' + (p > 80 ? ' danger' : p > 60 ? ' warning' : '');
+            if (pct) pct.textContent = p + '%';
+            if (max) max.textContent = this._contextSize.toLocaleString();
+        } else {
+            fill.style.width = '0%';
+            if (pct) pct.textContent = '—';
+            if (max) max.textContent = this._contextSize > 0 ? this._contextSize.toLocaleString() : '?';
+        }
+    },
+
+    updateContext(tokenUsage, messageCount) {
+        const empty = document.getElementById('ctx-empty');
+        const stats = document.getElementById('ctx-stats');
+        if (!tokenUsage || !tokenUsage.total_tokens) {
+            if (empty) empty.style.display = '';
+            if (stats) stats.classList.remove('visible');
+            return;
+        }
+        if (empty) empty.style.display = 'none';
+        if (stats) stats.classList.add('visible');
+
+        const fmt = n => Number(n).toLocaleString();
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+        set('ctx-msg-count',       messageCount || 0);
+        set('ctx-llm-calls',       tokenUsage.calls || 0);
+        set('ctx-last-prompt',     fmt(tokenUsage.last_prompt || 0));
+        set('ctx-last-completion', fmt(tokenUsage.last_completion || 0));
+        set('ctx-total-tokens',    fmt(tokenUsage.total_tokens || 0));
+        set('ctx-tokens-used',     fmt(tokenUsage.last_prompt || 0));
+
+        this._refreshContextBar();
     },
 
     /** Called from websocket/chat handlers with trace array */

@@ -315,6 +315,8 @@ async def handle_chat_message(
                 "status": response.status,
                 "trace": response.trace,
                 "tool_results": [tr.to_dict() for tr in response.tool_results],
+                "token_usage": response.token_usage,
+                "message_count": len(session.conversation.messages),
             })
 
             # Actualizar CWD si cambió

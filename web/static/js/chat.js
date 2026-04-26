@@ -146,6 +146,10 @@ const Chat = {
                 Sidebar.updateTrace(data.trace);
             }
 
+            if (data.token_usage && window.Sidebar) {
+                Sidebar.updateContext(data.token_usage, data.message_count);
+            }
+
             if (data.tool_results && data.tool_results.length > 0) {
                 data.tool_results.forEach(result => {
                     this.renderToolCall(result);
