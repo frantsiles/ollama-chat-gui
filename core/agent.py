@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from config import MAX_AGENT_STEPS, OperationMode
+from llm.prompts import PromptManager
 from core.models import (
     AgentState,
     Conversation,

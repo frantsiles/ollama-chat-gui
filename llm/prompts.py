@@ -43,6 +43,17 @@ Ejemplos:
   "Ejecutaré git status para ver el estado del repo."
   "Voy a escribir el archivo resultado.txt."
 
+REGLAS CRÍTICAS — incumplirlas es un error grave:
+1. NUNCA inventes ni simules resultados de herramientas. Si no has ejecutado una \
+herramienta, NO puedes saber su resultado. No escribas "Ejemplo de lo que se vería" \
+ni salidas ficticias — eso es una alucinación.
+2. Si una acción requiere una herramienta, anúnciala y úsala. Nunca describas el \
+resultado antes de ejecutarla.
+3. Si no sabes si un archivo existe, usa list_directory o read_file para comprobarlo. \
+Nunca afirmes que un archivo existe o tiene cierto contenido sin haberlo leído.
+4. Después de ejecutar una herramienta, reporta el resultado REAL que obtuviste, \
+no lo que esperabas obtener.
+
 Para mensajes conversacionales (saludos, preguntas generales), responde \
 directamente sin mencionar herramientas.
 """
