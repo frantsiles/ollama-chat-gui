@@ -158,10 +158,19 @@ class TestFileCRUD:
         assert r.status_code == 200
         assert Path(new_path).exists()
 
-        # delete
-        r = client.delete("/api/files/delete", params={"path": new_path, "workspace": str(ws)})
+        # permanent delete (trash=false so it doesn't depend on home-jail for .trash/)
+        r = client.delete("/api/files/delete", params={"path": new_path, "workspace": str(ws), "trash": "false"})
         assert r.status_code == 200
         assert not Path(new_path).exists()
+
+    def test_delete_moves_to_trash(self, client, ws):
+        path = str(ws / "hello.txt")
+        r = client.delete("/api/files/delete", params={"path": path, "workspace": str(ws), "trash": "true"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["trashed"] is True
+        assert not Path(path).exists()
+        assert Path(data["trash_path"]).exists()
 
     def test_create_outside_workspace_rejected(self, client, ws, tmp_path):
         other = tmp_path.parent / "evil.txt"

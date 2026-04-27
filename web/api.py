@@ -412,20 +412,35 @@ async def rename_entry(body: RenameBody) -> Dict[str, Any]:
 
 
 @router.delete("/files/delete")
-async def delete_entry(path: str, workspace: str = "") -> Dict[str, Any]:
-    """Elimina un archivo o directorio (recursivo)."""
+async def delete_entry(path: str, workspace: str = "", trash: bool = True) -> Dict[str, Any]:
+    """Elimina (o mueve a la papelera) un archivo o directorio."""
+    import shutil
+    from datetime import datetime
+
     target = _resolve_safe(path, workspace or None)
     if not target.exists():
         raise HTTPException(status_code=404, detail="No encontrado")
+
+    if trash and workspace:
+        ws = Path(workspace).expanduser().resolve()  # already validated via path check above
+        trash_dir = ws / ".trash"
+        try:
+            trash_dir.mkdir(exist_ok=True)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            trash_dest = trash_dir / f"{stamp}_{target.name}"
+            shutil.move(str(target), str(trash_dest))
+        except PermissionError:
+            raise HTTPException(status_code=403, detail="Permiso denegado")
+        return {"deleted": str(target), "trash_path": str(trash_dest), "trashed": True}
+
     try:
-        import shutil
         if target.is_dir():
             shutil.rmtree(target)
         else:
             target.unlink()
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permiso denegado")
-    return {"deleted": str(target)}
+    return {"deleted": str(target), "trashed": False}
 
 
 @router.post("/files/duplicate")

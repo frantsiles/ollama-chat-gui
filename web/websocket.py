@@ -727,8 +727,37 @@ _WATCH_IGNORE = frozenset({
     '.mypy_cache', '.pytest_cache', 'dist', 'build', '.next',
 })
 
+async def _git_status_data(watch_path: str) -> dict:
+    """Run git status --porcelain and return badge map (reuses api._git logic inline)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "git", "status", "--porcelain", "-u",
+            cwd=watch_path,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5.0)
+    except Exception:
+        return {"files": {}, "is_git": False}
+
+    if proc.returncode == 128:
+        return {"files": {}, "is_git": False}
+
+    files: dict[str, str] = {}
+    for line in stdout.decode(errors="replace").splitlines():
+        if len(line) < 4:
+            continue
+        xy, rel = line[:2], line[3:]
+        if " -> " in rel:
+            rel = rel.split(" -> ", 1)[1]
+        rel = rel.strip().strip('"')
+        badge = xy[0] if xy[0] != " " else xy[1]
+        files[rel] = "U" if badge == "?" else badge
+    return {"files": files, "is_git": True}
+
+
 async def _file_watcher_task(websocket: WebSocket, watch_path: str, stop_event: asyncio.Event) -> None:
-    """Watch *watch_path* and push file_changed events over *websocket*."""
+    """Watch *watch_path* and push file_changed + git_status_changed events over *websocket*."""
     try:
         from watchfiles import awatch, Change
     except ImportError:
@@ -741,6 +770,17 @@ async def _file_watcher_task(websocket: WebSocket, watch_path: str, stop_event: 
     def _ignore(raw_path: str) -> bool:
         p = Path(raw_path)
         return any(part in _WATCH_IGNORE for part in p.parts)
+
+    git_debounce_task: asyncio.Task | None = None
+
+    async def _push_git_status_debounced() -> None:
+        """Wait 600 ms then push git_status_changed (debounces rapid file saves)."""
+        await asyncio.sleep(0.6)
+        data = await _git_status_data(str(root))
+        try:
+            await websocket.send_json({"type": "git_status_changed", **data})
+        except Exception:
+            pass
 
     try:
         async for changes in awatch(str(root), stop_event=stop_event):
@@ -762,8 +802,15 @@ async def _file_watcher_task(websocket: WebSocket, watch_path: str, stop_event: 
                     await websocket.send_json({"type": "file_changed", "changes": batch})
                 except Exception:
                     break  # socket closed
+                # Debounce git status push: cancel previous, schedule new
+                if git_debounce_task and not git_debounce_task.done():
+                    git_debounce_task.cancel()
+                git_debounce_task = asyncio.create_task(_push_git_status_debounced())
     except Exception as e:
         logger.debug(f"File watcher stopped: {e}")
+    finally:
+        if git_debounce_task and not git_debounce_task.done():
+            git_debounce_task.cancel()
 
     logger.info(f"👁  File watcher stopped for: {root}")
 

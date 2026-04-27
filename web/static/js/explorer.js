@@ -398,9 +398,13 @@ const Explorer = {
                             path: item.path,
                             show_hidden: Explorer._showHidden ? '1' : '0',
                             use_gitignore: Explorer._useGitignore ? '1' : '0',
+                            workspace: Explorer.workspacePath || '',
                         });
                         const res = await fetch('/api/files?' + p);
-                        if (!res.ok) throw new Error();
+                        if (!res.ok) {
+                            const err = await res.json().catch(() => ({}));
+                            throw new Error(err.detail || `HTTP ${res.status}`);
+                        }
                         const data = await res.json();
                         children.innerHTML = '';
                         data.items.forEach(child => {
@@ -409,8 +413,8 @@ const Explorer = {
                         if (data.items.length === 0) {
                             children.innerHTML = '<div class="file-tree-empty" style="padding-left:' + (indentPx + 32) + 'px">Vacía</div>';
                         }
-                    } catch {
-                        children.innerHTML = '<div class="file-tree-error">Error</div>';
+                    } catch (err) {
+                        children.innerHTML = `<div class="file-tree-error">Error: ${Utils.escapeHtml(String(err))}</div>`;
                     }
                 }
 
@@ -701,14 +705,31 @@ const Explorer = {
                 </svg>
                 Duplicar
             </div>
-            <div class="context-menu-item danger" id="ctx-delete">
+            <div class="context-menu-item" id="ctx-delete">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <polyline points="3 6 5 6 21 6"/>
                     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
                     <path d="M10 11v6M14 11v6"/>
                     <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
                 </svg>
-                Eliminar
+                Mover a papelera
+            </div>
+            <div class="context-menu-item danger" id="ctx-delete-permanent">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                    <path d="M10 11v6M14 11v6"/>
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                    <line x1="2" y1="2" x2="22" y2="22" stroke-width="2"/>
+                </svg>
+                Eliminar permanentemente
+            </div>
+            <div class="context-menu-item danger" id="ctx-empty-trash" style="display:none">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="3 6 5 6 21 6"/>
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                </svg>
+                Vaciar papelera
             </div>
         `;
         document.body.appendChild(menu);
@@ -778,8 +799,38 @@ const Explorer = {
             this._hideContextMenu();
             if (!t) return;
             const label = t.type === 'dir' ? `la carpeta "${t.name}" y todo su contenido` : `el archivo "${t.name}"`;
-            ExplorerDialog.confirm(`¿Eliminar ${label}?`, 'Eliminar', () => this._crudDelete(t.path));
+            ExplorerDialog.confirm(`¿Mover a la papelera: ${label}?`, 'Mover', () => this._crudDelete(t.path, false));
         });
+
+        document.getElementById('ctx-delete-permanent').addEventListener('click', () => {
+            const t = this.contextTarget;
+            this._hideContextMenu();
+            if (!t) return;
+            const label = t.type === 'dir' ? `la carpeta "${t.name}" y todo su contenido` : `el archivo "${t.name}"`;
+            ExplorerDialog.confirm(`¿Eliminar permanentemente ${label}? Esta acción no se puede deshacer.`, 'Eliminar', () => this._crudDelete(t.path, true));
+        });
+
+        document.getElementById('ctx-empty-trash').addEventListener('click', () => {
+            this._hideContextMenu();
+            ExplorerDialog.confirm('¿Vaciar la papelera (.trash/) permanentemente?', 'Vaciar', () => this._emptyTrash());
+        });
+    },
+
+    async _emptyTrash() {
+        const ws = this.workspacePath;
+        if (!ws) return;
+        const trashPath = ws + '/.trash';
+        try {
+            const res = await fetch('/api/files/delete?path=' + encodeURIComponent(trashPath)
+                + '&workspace=' + encodeURIComponent(ws)
+                + '&trash=false', { method: 'DELETE' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || 'Error');
+            Utils.showToast('Papelera vaciada', 'success');
+            this._refreshCurrentTree();
+        } catch (err) {
+            Utils.showToast('Error al vaciar papelera: ' + String(err), 'error');
+        }
     },
 
     _showContextMenu(x, y, isDir) {
@@ -787,6 +838,9 @@ const Explorer = {
         document.getElementById('ctx-set-workspace').style.display = isDir ? 'flex' : 'none';
         document.getElementById('ctx-open-in-tree').style.display = isDir ? 'flex' : 'none';
         document.getElementById('ctx-attach-to-chat').style.display = isDir ? 'none' : 'flex';
+        // Show "Vaciar papelera" only when right-clicking on .trash dir
+        const isTrash = this.contextTarget?.name === '.trash' && isDir;
+        document.getElementById('ctx-empty-trash').style.display = isTrash ? 'flex' : 'none';
 
         menu.style.display = 'block';
         menu.style.left = x + 'px';
@@ -885,15 +939,17 @@ const Explorer = {
         }
     },
 
-    async _crudDelete(path) {
+    async _crudDelete(path, permanent = false) {
+        const ws = this.workspacePath || '';
+        const useTrash = !permanent && !!ws;
+        const url = '/api/files/delete?path=' + encodeURIComponent(path)
+            + '&workspace=' + encodeURIComponent(ws)
+            + '&trash=' + (useTrash ? 'true' : 'false');
         try {
-            const res = await fetch('/api/files/delete?path=' + encodeURIComponent(path)
-                + '&workspace=' + encodeURIComponent(this.workspacePath || ''), {
-                method: 'DELETE',
-            });
+            const res = await fetch(url, { method: 'DELETE' });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Error');
-            Utils.showToast('Eliminado', 'success');
+            Utils.showToast(data.trashed ? 'Movido a la papelera (.trash/)' : 'Eliminado permanentemente', 'success');
             this._refreshCurrentTree();
         } catch (err) {
             Utils.showToast('Error: ' + String(err), 'error');
@@ -1637,11 +1693,11 @@ const TreeSelection = {
         const items = this.items();
         const n = items.length;
         ExplorerDialog.confirm(
-            `¿Eliminar ${n} elemento${n !== 1 ? 's' : ''}?`,
-            'Eliminar',
+            `¿Mover ${n} elemento${n !== 1 ? 's' : ''} a la papelera?`,
+            'Mover',
             async () => {
                 for (const item of items) {
-                    await Explorer._crudDelete(item.path);
+                    await Explorer._crudDelete(item.path, false);
                 }
                 this.clear();
             }
@@ -1652,30 +1708,39 @@ const TreeSelection = {
 window.TreeSelection = TreeSelection;
 
 // =============================================================================
-// GitStatus  (periodic poll + badge overlay)
+// GitStatus  (WS-push primary, 60 s poll as fallback)
 // =============================================================================
 
 const GitStatus = {
     _timer: null,
-    _INTERVAL_MS: 15_000,   // poll every 15 s
+    _FALLBACK_MS: 60_000,   // fallback poll every 60 s (WS push is the primary path)
     _cache: {},             // rel_path → badge letter
     _isGit: false,
+    _wsPath: null,
 
     init() {
-        // Triggered by Explorer.setWorkspace and FileWatcher refresh
+        if (!window.wsManager) return;
+        // Primary path: server pushes git_status_changed after file_changed events
+        wsManager.on('git_status_changed', (payload) => {
+            if (!this._wsPath) return;
+            this._isGit = payload.is_git ?? this._isGit;
+            this._cache = payload.files || {};
+            this._applyBadges(this._wsPath);
+        });
     },
 
     onWorkspaceChange(wsPath) {
         clearTimeout(this._timer);
+        this._wsPath = wsPath;
         this._cache = {};
         this._isGit = false;
         this._removeAllBadges();
         if (wsPath) this._poll(wsPath);
     },
 
-    scheduleRefresh(wsPath) {
+    _scheduleFallback(wsPath) {
         clearTimeout(this._timer);
-        if (wsPath) this._timer = setTimeout(() => this._poll(wsPath), this._INTERVAL_MS);
+        if (wsPath) this._timer = setTimeout(() => this._poll(wsPath), this._FALLBACK_MS);
     },
 
     async _poll(wsPath) {
@@ -1686,10 +1751,10 @@ const GitStatus = {
             this._isGit = data.is_git;
             this._cache = data.files || {};
             this._applyBadges(wsPath);
-        } catch {
-            // silently skip on network error
+        } catch (err) {
+            console.warn('[GitStatus] poll error:', err);
         }
-        this.scheduleRefresh(wsPath);
+        this._scheduleFallback(wsPath);
     },
 
     _applyBadges(wsPath) {
@@ -1703,7 +1768,6 @@ const GitStatus = {
             if (!itemPath) return;
             let rel;
             try {
-                // Compute path relative to wsPath
                 if (itemPath.startsWith(wsPath + '/')) {
                     rel = itemPath.slice(wsPath.length + 1);
                 } else {
@@ -1733,7 +1797,6 @@ const GitStatus = {
         return { M: 'Modificado', A: 'Añadido', D: 'Eliminado', R: 'Renombrado', C: 'Copiado', U: 'Sin seguimiento', X: 'Conflicto' }[b] || b;
     },
 
-    // Called from FileWatcher after a tree refresh so badges get re-applied
     onTreeRefreshed(wsPath) {
         if (wsPath && this._isGit) this._applyBadges(wsPath);
     },
@@ -1782,10 +1845,7 @@ const FileWatcher = {
             if (SearchPanel._input?.value.trim()) {
                 SearchPanel._search();
             }
-            // Re-poll git status and panel after file changes
-            if (window.GitStatus && Explorer.workspacePath) {
-                GitStatus.onWorkspaceChange(Explorer.workspacePath);
-            }
+            // git badges arrive via git_status_changed WS push (no poll needed here)
             if (window.GitPanel && Explorer.workspacePath) {
                 GitPanel.refresh();
             }
