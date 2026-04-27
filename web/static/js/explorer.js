@@ -992,26 +992,19 @@ const Explorer = {
     // -------------------------------------------------------------------------
 
     _svgChevron() {
-        return `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>`;
+        return `<svg width="12" height="12"><use href="#icon-chevron"/></svg>`;
     },
 
     _svgFolder(open) {
-        if (open) {
-            return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-warning)" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="2" y1="10" x2="22" y2="10"/></svg>`;
-        }
-        return `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent-warning)" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>`;
+        const id = open ? 'icon-folder-open' : 'icon-folder-closed';
+        return `<svg width="16" height="16" class="folder-icon"><use href="#${id}"/></svg>`;
     },
 
     _svgFile(name) {
         const ext = (name || '').split('.').pop().toLowerCase();
-        const color = {
-            py: '#3572A5', js: '#f1e05a', ts: '#2b7489',
-            html: '#e34c26', css: '#563d7c', json: '#cbcb41',
-            md: '#083fa1', txt: 'currentColor', sh: '#89e051',
-            yml: '#cb171e', yaml: '#cb171e', toml: '#9c4221',
-        }[ext] || 'var(--text-tertiary)';
-
-        return `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><polyline points="13 2 13 9 20 9"/></svg>`;
+        const known = new Set(['py','js','ts','jsx','tsx','html','css','json','md','txt','sh','yml','yaml','toml']);
+        const cls = known.has(ext) ? `fi-${ext}` : 'fi-default';
+        return `<svg width="14" height="14" class="${cls}"><use href="#icon-file"/></svg>`;
     },
 };
 
@@ -1101,6 +1094,37 @@ window.ExplorerDialog = ExplorerDialog;
 
 const FileViewer = {
     _currentContent: '',
+    _hljsPromise: null,   // null = not started, Promise = in-flight or resolved
+
+    _loadHljs() {
+        if (this._hljsPromise) return this._hljsPromise;
+        this._hljsPromise = new Promise((resolve) => {
+            // CSS themes (inject once, lazy)
+            if (!document.getElementById('hljs-theme-dark')) {
+                const dark = Object.assign(document.createElement('link'), {
+                    rel: 'stylesheet', id: 'hljs-theme-dark',
+                    href: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css',
+                });
+                document.head.appendChild(dark);
+            }
+            if (!document.getElementById('hljs-theme-light')) {
+                const light = Object.assign(document.createElement('link'), {
+                    rel: 'stylesheet', id: 'hljs-theme-light',
+                    href: 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-light.min.css',
+                });
+                light.disabled = true;
+                document.head.appendChild(light);
+            }
+            // JS bundle
+            if (window.hljs) { resolve(); return; }
+            const script = document.createElement('script');
+            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js';
+            script.onload = resolve;
+            script.onerror = resolve;   // graceful: no highlight if CDN fails
+            document.head.appendChild(script);
+        });
+        return this._hljsPromise;
+    },
 
     open(path, name) {
         const overlay = document.getElementById('file-viewer-overlay');
@@ -1139,13 +1163,13 @@ const FileViewer = {
                 return;
             }
 
-            this._render(data);
+            await this._render(data);
         } catch (err) {
             this._showError('Error de red: ' + String(err));
         }
     },
 
-    _render(data) {
+    async _render(data) {
         this._currentContent = data.content;
 
         // Meta info
@@ -1159,13 +1183,15 @@ const FileViewer = {
             `<span>${i + 1}</span>`
         ).join('');
 
-        // Syntax highlighting
+        // Syntax highlighting — lazy-load hljs on first open
         const codeEl = document.getElementById('file-viewer-code');
         const escaped = data.content
             .replace(/&/g, '&amp;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
         codeEl.innerHTML = escaped;
+
+        await this._loadHljs();
 
         const lang = this._langFromExt(data.ext);
         if (window.hljs && lang) {

@@ -1323,3 +1323,29 @@
     color: var(--text-tertiary);
     font-size: var(--text-sm);
 }
+
+/* =============================================================================
+   SVG sprite icons — color classes for file-type icons
+   ============================================================================= */
+
+.tree-icon svg, .tree-chevron svg { display: block; flex-shrink: 0; }
+
+/* Folder icons always use the warning accent */
+.tree-icon .folder-icon { color: var(--accent-warning); }
+
+/* File icons by extension */
+.fi-py   { color: #3572A5; }
+.fi-js   { color: #f1e05a; }
+.fi-ts   { color: #2b7489; }
+.fi-jsx  { color: #f1e05a; }
+.fi-tsx  { color: #2b7489; }
+.fi-html { color: #e34c26; }
+.fi-css  { color: #563d7c; }
+.fi-json { color: #cbcb41; }
+.fi-md   { color: #083fa1; }
+.fi-sh   { color: #89e051; }
+.fi-yml,
+.fi-yaml { color: #cb171e; }
+.fi-toml { color: #9c4221; }
+.fi-txt  { color: currentColor; }
+.fi-default { color: var(--text-tertiary); }
