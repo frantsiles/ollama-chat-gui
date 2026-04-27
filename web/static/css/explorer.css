@@ -129,6 +129,7 @@
     letter-spacing: 1px;
     text-transform: uppercase;
     flex-shrink: 0;
+    -webkit-user-select: none;
     user-select: none;
 }
 
@@ -159,6 +160,7 @@
     justify-content: space-between;
     padding: 6px var(--space-md);
     cursor: pointer;
+    -webkit-user-select: none;
     user-select: none;
     font-size: 11px;
     font-weight: 700;
@@ -320,11 +322,6 @@
     color: var(--accent-danger);
 }
 
-/* Tree row — selected state */
-.tree-item-row.selected {
-    background: var(--accent-primary-bg);
-}
-
 .tree-item-row.focused {
     outline: 1px solid var(--accent-primary);
     outline-offset: -1px;
@@ -352,7 +349,7 @@
 .git-badge-R { color: #60a5fa; }   /* renamed   */
 .git-badge-C { color: #a78bfa; }   /* copied    */
 .git-badge-U { color: var(--text-tertiary); }  /* untracked */
-.git-badge-X { color: #f87171; }   /* conflict  }
+.git-badge-X { color: #f87171; }   /* conflict */
 
 .explorer-workspace-actions {
     display: flex;
@@ -386,6 +383,7 @@
     overflow-x: hidden;
     padding: var(--space-xs) 0;
     font-size: var(--text-sm);
+    -webkit-user-select: none;
     user-select: none;
 }
 
@@ -823,6 +821,7 @@
     flex-shrink: 0;
     padding: 16px 12px 16px 16px;
     text-align: right;
+    -webkit-user-select: none;
     user-select: none;
     pointer-events: none;
     color: var(--text-tertiary);
