@@ -26,9 +26,16 @@ const GitPanel = {
                 });
             }
         });
+
+        // Decouple: react to workspace/file changes via event bus
+        window.addEventListener('explorer:workspace-changed', ({ detail: { path } }) => {
+            this.onWorkspaceChange(path);
+        });
+        window.addEventListener('explorer:files-changed', () => {
+            if (this._wsPath) this.refresh();
+        });
     },
 
-    // Called by Explorer when workspace changes
     onWorkspaceChange(path) {
         this._wsPath = path;
         this._logPage = 1;

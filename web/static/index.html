@@ -212,8 +212,19 @@
                     </div>
 
                     <!-- File Tree -->
-                    <div class="file-tree" id="file-tree" tabindex="0">
+                    <div class="file-tree" id="file-tree" tabindex="0" role="tree" aria-label="Explorador de archivos">
                         <div class="file-tree-loading">Selecciona un workspace para explorar</div>
+                    </div>
+
+                    <!-- Recientes -->
+                    <div class="recent-section" id="recent-section">
+                        <div class="recent-header" id="recent-header">
+                            <span>Recientes</span>
+                            <svg class="recent-chevron" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <polyline points="6 9 12 15 18 9"/>
+                            </svg>
+                        </div>
+                        <div class="recent-list" id="recent-list"></div>
                     </div>
                 </div>
 

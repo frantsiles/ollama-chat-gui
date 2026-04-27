@@ -22,6 +22,7 @@ const Explorer = {
         this._bindSidebarToggle();
         this._bindWorkspaceActions();
         ExplorerDialog.init();
+        RecentFiles.init();
         this._bindOsDropZone();
         this._bindChatDropZone();
         this._bindTreeKeyboard();
@@ -183,9 +184,7 @@ const Explorer = {
         this.workspacePath = path;
         this.currentPath = path;
         this._updateWorkspaceBar(path);
-        if (window.FileWatcher) FileWatcher.onWorkspaceChange(path);
-        if (window.GitStatus)  GitStatus.onWorkspaceChange(path);
-        if (window.GitPanel)   GitPanel.onWorkspaceChange(path);
+        this._emitWorkspaceChanged(path);
 
         // Reload tree root
         const tree = document.getElementById('file-tree');
@@ -193,6 +192,10 @@ const Explorer = {
             tree.innerHTML = '';
             this._loadTree(path, tree, 0);
         }
+    },
+
+    _emitWorkspaceChanged(path) {
+        window.dispatchEvent(new CustomEvent('explorer:workspace-changed', { detail: { path } }));
     },
 
     _updateWorkspaceBar(path) {
@@ -272,8 +275,8 @@ const Explorer = {
     },
 
     /** Load directory contents and append tree items into container */
-    async _loadTree(path, container, depth) {
-        container.innerHTML = '<div class="file-tree-loading">Cargando...</div>';
+    async _loadTree(path, container, depth, offset = 0) {
+        if (offset === 0) container.innerHTML = '<div class="file-tree-loading">Cargando...</div>';
 
         try {
             const params = new URLSearchParams({
@@ -281,21 +284,25 @@ const Explorer = {
                 show_hidden: this._showHidden ? '1' : '0',
                 use_gitignore: this._useGitignore ? '1' : '0',
                 workspace: this.workspacePath || '',
+                offset,
             });
             const res = await fetch('/api/files?' + params);
             if (!res.ok) throw new Error(await res.text());
             const data = await res.json();
 
-            container.innerHTML = '';
-            this.currentPath = data.path;
+            if (offset === 0) {
+                container.innerHTML = '';
+                this.currentPath = data.path;
+            } else {
+                container.querySelector('.load-more-row')?.remove();
+            }
 
-            if (data.items.length === 0) {
+            if (data.items.length === 0 && offset === 0) {
                 container.innerHTML = '<div class="file-tree-empty">Carpeta vacía</div>';
                 return;
             }
 
-            // "Go up" row at root level
-            if (depth === 0 && data.parent) {
+            if (depth === 0 && offset === 0 && data.parent) {
                 container.appendChild(this._makeUpRow(data.parent));
             }
 
@@ -303,7 +310,14 @@ const Explorer = {
                 container.appendChild(this._makeTreeItem(item, depth));
             });
 
-            // Apply git badges after the DOM is populated
+            if (data.truncated) {
+                const next = offset + data.items.length;
+                container.appendChild(this._makeLoadMoreRow(
+                    data.total - next,
+                    () => this._loadTree(path, container, depth, next)
+                ));
+            }
+
             if (depth === 0 && window.GitStatus) {
                 GitStatus.onTreeRefreshed(this.workspacePath);
             }
@@ -328,6 +342,14 @@ const Explorer = {
         return row;
     },
 
+    _makeLoadMoreRow(remaining, onClick) {
+        const row = document.createElement('div');
+        row.className = 'tree-item-row load-more-row';
+        row.innerHTML = `<span class="tree-load-more">… ${remaining} más</span>`;
+        row.addEventListener('click', onClick);
+        return row;
+    },
+
     _makeTreeItem(item, depth) {
         const wrap = document.createElement('div');
         wrap.className = 'tree-item';
@@ -340,6 +362,11 @@ const Explorer = {
         const row = document.createElement('div');
         row.className = 'tree-item-row' + (isWorkspace ? ' workspace' : '');
         row.title = item.path;
+        row.setAttribute('role', 'treeitem');
+        row.setAttribute('aria-level', depth + 1);
+        row.setAttribute('aria-selected', 'false');
+        row.setAttribute('aria-label', item.name);
+        if (item.type === 'dir') row.setAttribute('aria-expanded', 'false');
 
         row.innerHTML = `
             <span class="tree-indent" style="width:${indentPx}px"></span>
@@ -354,6 +381,7 @@ const Explorer = {
         // Children container (lazy)
         const children = document.createElement('div');
         children.className = 'tree-children';
+        children.setAttribute('role', 'group');
         let loaded = false;
         let open = false;
 
@@ -387,6 +415,7 @@ const Explorer = {
                 if (e.ctrlKey || e.metaKey || e.shiftKey) return; // handled above
                 open = !open;
                 children.classList.toggle('open', open);
+                row.setAttribute('aria-expanded', open ? 'true' : 'false');
                 const chevron = row.querySelector('.tree-chevron');
                 chevron.classList.toggle('open', open);
 
@@ -407,11 +436,35 @@ const Explorer = {
                         }
                         const data = await res.json();
                         children.innerHTML = '';
-                        data.items.forEach(child => {
-                            children.appendChild(this._makeTreeItem(child, depth + 1));
-                        });
                         if (data.items.length === 0) {
                             children.innerHTML = '<div class="file-tree-empty" style="padding-left:' + (indentPx + 32) + 'px">Vacía</div>';
+                        } else {
+                            data.items.forEach(child => {
+                                children.appendChild(this._makeTreeItem(child, depth + 1));
+                            });
+                            if (data.truncated) {
+                                const loadFolderMore = async (folderOffset) => {
+                                    children.querySelector('.load-more-row')?.remove();
+                                    const p2 = new URLSearchParams({
+                                        path: item.path,
+                                        show_hidden: Explorer._showHidden ? '1' : '0',
+                                        use_gitignore: Explorer._useGitignore ? '1' : '0',
+                                        workspace: Explorer.workspacePath || '',
+                                        offset: folderOffset,
+                                    });
+                                    const r2 = await fetch('/api/files?' + p2);
+                                    const d2 = await r2.json();
+                                    d2.items.forEach(child => {
+                                        children.appendChild(this._makeTreeItem(child, depth + 1));
+                                    });
+                                    if (d2.truncated) {
+                                        const next2 = folderOffset + d2.items.length;
+                                        children.appendChild(this._makeLoadMoreRow(d2.total - next2, () => loadFolderMore(next2)));
+                                    }
+                                };
+                                const next = data.items.length;
+                                children.appendChild(this._makeLoadMoreRow(data.total - next, () => loadFolderMore(next)));
+                            }
                         }
                     } catch (err) {
                         children.innerHTML = `<div class="file-tree-error">Error: ${Utils.escapeHtml(String(err))}</div>`;
@@ -619,9 +672,7 @@ const Explorer = {
                     workspacePath: path
                 });
                 Utils.showToast('Workspace actualizado: ' + path, 'success');
-                if (window.FileWatcher) FileWatcher.onWorkspaceChange(path);
-                if (window.GitStatus)  GitStatus.onWorkspaceChange(path);
-                if (window.GitPanel)   GitPanel.onWorkspaceChange(path);
+                this._emitWorkspaceChanged(path);
                 // Navigate tree to new workspace
                 const tree = document.getElementById('file-tree');
                 if (tree) this._loadTree(path, tree, 0);
@@ -1142,6 +1193,7 @@ const FileViewer = {
         overlay.style.display = 'flex';
         document.body.style.overflow = 'hidden';
 
+        window.RecentFiles?.push(path, name);
         this._fetch(path);
     },
 
@@ -1637,9 +1689,11 @@ const TreeSelection = {
         if (this._selected.has(row)) {
             this._selected.delete(row);
             row.classList.remove('selected');
+            row.setAttribute('aria-selected', 'false');
         } else {
             this._selected.set(row, item);
             row.classList.add('selected');
+            row.setAttribute('aria-selected', 'true');
             this._lastRow = row;
         }
         this.updateBar();
@@ -1655,6 +1709,7 @@ const TreeSelection = {
         };
         this._selected.set(row, item);
         row.classList.add('selected');
+        row.setAttribute('aria-selected', 'true');
         this._lastRow = row;
     },
 
@@ -1675,7 +1730,10 @@ const TreeSelection = {
     },
 
     clear() {
-        this._selected.forEach((_, row) => row.classList.remove('selected'));
+        this._selected.forEach((_, row) => {
+            row.classList.remove('selected');
+            row.setAttribute('aria-selected', 'false');
+        });
         this._selected.clear();
         this._lastRow = null;
         this.updateBar();
@@ -1752,6 +1810,11 @@ const GitStatus = {
             this._isGit = payload.is_git ?? this._isGit;
             this._cache = payload.files || {};
             this._applyBadges(this._wsPath);
+        });
+
+        // Decouple: react to workspace changes via event bus
+        window.addEventListener('explorer:workspace-changed', ({ detail: { path } }) => {
+            this.onWorkspaceChange(path);
         });
     },
 
@@ -1839,17 +1902,19 @@ const FileWatcher = {
         if (!window.wsManager) return;
 
         // Listen for file_changed events pushed by the server
-        wsManager.on('file_changed', (payload) => {
-            this._scheduleRefresh();
-        });
+        wsManager.on('file_changed', () => this._scheduleRefresh());
 
         // When workspace changes in Explorer, tell the server to watch the new path
         wsManager.on('connected', () => {
             if (Explorer.workspacePath) this._startWatch(Explorer.workspacePath);
         });
+
+        // Decouple: react to workspace changes via event bus
+        window.addEventListener('explorer:workspace-changed', ({ detail: { path } }) => {
+            this.onWorkspaceChange(path);
+        });
     },
 
-    // Called by Explorer._setWorkspace after the workspace changes
     onWorkspaceChange(path) {
         this._watchPath = path;
         this._startWatch(path);
@@ -1871,12 +1936,63 @@ const FileWatcher = {
             if (SearchPanel._input?.value.trim()) {
                 SearchPanel._search();
             }
-            // git badges arrive via git_status_changed WS push (no poll needed here)
-            if (window.GitPanel && Explorer.workspacePath) {
-                GitPanel.refresh();
-            }
+            // Notify other panels via event bus (git badges come via WS push)
+            window.dispatchEvent(new CustomEvent('explorer:files-changed', {
+                detail: { path: Explorer.workspacePath },
+            }));
         }, this._DEBOUNCE_MS);
     },
 };
 
 window.FileWatcher = FileWatcher;
+
+// ── RecentFiles ────────────────────────────────────────────────────────────
+const RecentFiles = {
+    _KEY: 'explorer_recent_files',
+    _MAX: 10,
+    _open: true,
+
+    init() {
+        const header = document.getElementById('recent-header');
+        header?.addEventListener('click', () => {
+            this._open = !this._open;
+            const list = document.getElementById('recent-list');
+            const chevron = header.querySelector('.recent-chevron');
+            if (list) list.style.display = this._open ? '' : 'none';
+            if (chevron) chevron.style.transform = this._open ? '' : 'rotate(-90deg)';
+        });
+        this._render();
+    },
+
+    push(path, name) {
+        let entries = this._load();
+        entries = entries.filter(e => e.path !== path);
+        entries.unshift({ path, name: name || path.split('/').pop() });
+        if (entries.length > this._MAX) entries = entries.slice(0, this._MAX);
+        localStorage.setItem(this._KEY, JSON.stringify(entries));
+        this._render();
+    },
+
+    _load() {
+        try { return JSON.parse(localStorage.getItem(this._KEY) || '[]'); } catch { return []; }
+    },
+
+    _render() {
+        const list = document.getElementById('recent-list');
+        const section = document.getElementById('recent-section');
+        if (!list) return;
+        const entries = this._load();
+        section.style.display = entries.length === 0 ? 'none' : '';
+        list.innerHTML = '';
+        entries.forEach(({ path, name }) => {
+            const row = document.createElement('div');
+            row.className = 'recent-item';
+            row.title = path;
+            row.innerHTML = `<span class="tree-icon">${Explorer._svgFile(name)}</span><span class="recent-name">${Utils.escapeHtml(name)}</span>`;
+            row.addEventListener('click', () => FileViewer.open(path, name));
+            list.appendChild(row);
+        });
+    },
+};
+
+window.RecentFiles = RecentFiles;

@@ -287,14 +287,18 @@ def _matches_gitignore(name: str, spec) -> bool:
     return bool(spec) and spec.match_file(name)
 
 
+MAX_TREE_ITEMS = 300   # max items returned per directory level
+
+
 @router.get("/files")
 async def list_files(
     path: str = "",
     show_hidden: bool = False,
     use_gitignore: bool = True,
     workspace: str = "",
+    offset: int = 0,
 ) -> Dict[str, Any]:
-    """Lista el contenido de un directorio para el explorador de archivos."""
+    """Lista el contenido de un directorio. Devuelve max MAX_TREE_ITEMS ítems por página."""
 
     if not path:
         path = str(Path.home())
@@ -308,7 +312,7 @@ async def list_files(
 
     gi_spec = _load_gitignore(target) if use_gitignore else None
 
-    items = []
+    all_items = []
     try:
         for entry in sorted(target.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
             try:
@@ -319,7 +323,7 @@ async def list_files(
                     continue
                 is_dir = entry.is_dir(follow_symlinks=False)
                 stat = entry.stat(follow_symlinks=False)
-                items.append({
+                all_items.append({
                     "name": entry.name,
                     "path": str(entry),
                     "type": "dir" if is_dir else "file",
@@ -331,12 +335,17 @@ async def list_files(
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permiso denegado")
 
+    total = len(all_items)
+    page = all_items[offset: offset + MAX_TREE_ITEMS]
     parent = str(target.parent) if target != target.parent else None
 
     return {
         "path": str(target),
         "parent": parent,
-        "items": items,
+        "items": page,
+        "total": total,
+        "offset": offset,
+        "truncated": total > offset + MAX_TREE_ITEMS,
     }
 
 
