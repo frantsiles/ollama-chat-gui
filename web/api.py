@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -237,24 +239,52 @@ async def get_current_plan(session_id: str) -> Dict[str, Any]:
 # File Explorer
 # =============================================================================
 
-def _load_gitignore_patterns(directory: Path) -> list[str]:
-    """Return gitignore patterns found in directory (simple glob patterns only)."""
+_HOME = Path.home().resolve()
+
+
+def _resolve_safe(path: str, workspace: str | None = None) -> Path:
+    """Resolve path and ensure it stays within workspace (or home as fallback).
+
+    Raises HTTP 400 for invalid paths, HTTP 403 for out-of-jail access.
+    """
+    try:
+        resolved = Path(path).expanduser().resolve()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ruta inválida")
+
+    if workspace:
+        try:
+            jail = Path(workspace).expanduser().resolve()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Workspace inválido")
+    else:
+        jail = _HOME
+
+    try:
+        resolved.relative_to(jail)
+    except ValueError:
+        raise HTTPException(
+            status_code=403,
+            detail="Acceso denegado: ruta fuera del workspace permitido",
+        )
+    return resolved
+
+
+def _load_gitignore(directory: Path):
+    """Return a pathspec.PathSpec built from directory's .gitignore (if present)."""
+    import pathspec
     gi = directory / ".gitignore"
-    patterns: list[str] = []
     if gi.is_file():
         try:
-            for line in gi.read_text(encoding="utf-8", errors="replace").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#"):
-                    patterns.append(line.rstrip("/"))
+            lines = gi.read_text(encoding="utf-8", errors="replace").splitlines()
+            return pathspec.PathSpec.from_lines("gitwildmatch", lines)
         except OSError:
             pass
-    return patterns
+    return pathspec.PathSpec.from_lines("gitwildmatch", [])
 
 
-def _matches_gitignore(name: str, patterns: list[str]) -> bool:
-    import fnmatch
-    return any(fnmatch.fnmatch(name, p) for p in patterns)
+def _matches_gitignore(name: str, spec) -> bool:
+    return bool(spec) and spec.match_file(name)
 
 
 @router.get("/files")
@@ -262,23 +292,21 @@ async def list_files(
     path: str = "",
     show_hidden: bool = False,
     use_gitignore: bool = True,
+    workspace: str = "",
 ) -> Dict[str, Any]:
     """Lista el contenido de un directorio para el explorador de archivos."""
 
     if not path:
         path = str(Path.home())
 
-    try:
-        target = Path(path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    target = _resolve_safe(path, workspace or None)
 
     if not target.exists():
         raise HTTPException(status_code=404, detail="Ruta no encontrada")
     if not target.is_dir():
         raise HTTPException(status_code=400, detail="La ruta no es un directorio")
 
-    gi_patterns = _load_gitignore_patterns(target) if use_gitignore else []
+    gi_spec = _load_gitignore(target) if use_gitignore else None
 
     items = []
     try:
@@ -287,7 +315,7 @@ async def list_files(
                 is_hidden = entry.name.startswith(".")
                 if is_hidden and not show_hidden:
                     continue
-                if use_gitignore and _matches_gitignore(entry.name, gi_patterns):
+                if use_gitignore and _matches_gitignore(entry.name, gi_spec):
                     continue
                 is_dir = entry.is_dir(follow_symlinks=False)
                 stat = entry.stat(follow_symlinks=False)
@@ -319,28 +347,29 @@ async def list_files(
 class FileCreateBody(BaseModel):
     path: str
     content: str = ""
+    workspace: str = ""
 
 class DirCreateBody(BaseModel):
     path: str
+    workspace: str = ""
 
 class RenameBody(BaseModel):
     path: str
     new_name: str
+    workspace: str = ""
 
 class DeleteBody(BaseModel):
     path: str
 
 class DuplicateBody(BaseModel):
     path: str
+    workspace: str = ""
 
 
 @router.post("/files/create")
 async def create_file(body: FileCreateBody) -> Dict[str, Any]:
     """Crea un nuevo archivo de texto."""
-    try:
-        target = Path(body.path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    target = _resolve_safe(body.path, body.workspace or None)
     if target.exists():
         raise HTTPException(status_code=409, detail="El archivo ya existe")
     try:
@@ -354,10 +383,7 @@ async def create_file(body: FileCreateBody) -> Dict[str, Any]:
 @router.post("/files/mkdir")
 async def create_dir(body: DirCreateBody) -> Dict[str, Any]:
     """Crea un nuevo directorio."""
-    try:
-        target = Path(body.path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    target = _resolve_safe(body.path, body.workspace or None)
     if target.exists():
         raise HTTPException(status_code=409, detail="El directorio ya existe")
     try:
@@ -370,10 +396,7 @@ async def create_dir(body: DirCreateBody) -> Dict[str, Any]:
 @router.post("/files/rename")
 async def rename_entry(body: RenameBody) -> Dict[str, Any]:
     """Renombra un archivo o directorio."""
-    try:
-        src = Path(body.path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    src = _resolve_safe(body.path, body.workspace or None)
     if not src.exists():
         raise HTTPException(status_code=404, detail="No encontrado")
     if "/" in body.new_name or "\\" in body.new_name:
@@ -389,12 +412,9 @@ async def rename_entry(body: RenameBody) -> Dict[str, Any]:
 
 
 @router.delete("/files/delete")
-async def delete_entry(path: str) -> Dict[str, Any]:
+async def delete_entry(path: str, workspace: str = "") -> Dict[str, Any]:
     """Elimina un archivo o directorio (recursivo)."""
-    try:
-        target = Path(path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    target = _resolve_safe(path, workspace or None)
     if not target.exists():
         raise HTTPException(status_code=404, detail="No encontrado")
     try:
@@ -411,10 +431,7 @@ async def delete_entry(path: str) -> Dict[str, Any]:
 @router.post("/files/duplicate")
 async def duplicate_entry(body: DuplicateBody) -> Dict[str, Any]:
     """Duplica un archivo o directorio con sufijo '_copia'."""
-    try:
-        src = Path(body.path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    src = _resolve_safe(body.path, body.workspace or None)
     if not src.exists():
         raise HTTPException(status_code=404, detail="No encontrado")
 
@@ -450,16 +467,15 @@ async def duplicate_entry(body: DuplicateBody) -> Dict[str, Any]:
 class MoveBody(BaseModel):
     src_path: str
     dst_dir: str   # destination directory (not full path)
+    workspace: str = ""
 
 
 @router.post("/files/move")
 async def move_entry(body: MoveBody) -> Dict[str, Any]:
     """Mueve un archivo o directorio a otro directorio."""
-    try:
-        src = Path(body.src_path).expanduser().resolve()
-        dst_dir = Path(body.dst_dir).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    ws = body.workspace or None
+    src = _resolve_safe(body.src_path, ws)
+    dst_dir = _resolve_safe(body.dst_dir, ws)
     if not src.exists():
         raise HTTPException(status_code=404, detail="Origen no encontrado")
     if not dst_dir.is_dir():
@@ -478,26 +494,36 @@ async def move_entry(body: MoveBody) -> Dict[str, Any]:
 MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50 MB per file
 
 
+_SAFE_FILENAME = re.compile(r'[^\w.\- ]')
+
+
+def _sanitize_filename(raw: str) -> str:
+    """Return a safe filename: strip path separators, null bytes, leading dots/spaces."""
+    name = Path(raw).name  # strip any directory component
+    name = name.replace("\x00", "")  # null bytes
+    name = _SAFE_FILENAME.sub("_", name)  # replace unsafe chars
+    name = name.lstrip(". ")  # no leading dots or spaces
+    return name or "upload"
+
+
 @router.post("/files/upload")
 async def upload_files(
     dir: str,
+    workspace: str = "",
     files: list[UploadFile] = FastAPIFile(...),
 ) -> Dict[str, Any]:
     """Sube uno o más archivos a un directorio del workspace."""
-    try:
-        target_dir = Path(dir).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    target_dir = _resolve_safe(dir, workspace or None)
     if not target_dir.is_dir():
         raise HTTPException(status_code=400, detail="El directorio no existe")
 
     saved = []
     for uf in files:
-        name = Path(uf.filename or "upload").name  # strip any path traversal
+        name = _sanitize_filename(uf.filename or "upload")
         dest = target_dir / name
         # avoid collisions
         counter = 1
-        stem, suffix = dest.stem, dest.suffix
+        stem, suffix = Path(name).stem, Path(name).suffix
         while dest.exists():
             dest = target_dir / f"{stem}_{counter}{suffix}"
             counter += 1
@@ -522,17 +548,14 @@ _IGNORE_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv',
                 '.nuxt', 'coverage', '.tox'}
 
 @router.get("/files/search")
-async def search_files(path: str = "", q: str = "") -> Dict[str, Any]:
+async def search_files(path: str = "", q: str = "", workspace: str = "") -> Dict[str, Any]:
     """Busca archivos por nombre (fuzzy) dentro de un directorio."""
     if not q:
         return {"items": []}
     if not path:
         path = str(Path.home())
 
-    try:
-        root = Path(path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    root = _resolve_safe(path, workspace or None)
 
     if not root.is_dir():
         raise HTTPException(status_code=400, detail="La ruta no es un directorio")
@@ -541,32 +564,35 @@ async def search_files(path: str = "", q: str = "") -> Dict[str, Any]:
     results: list[Dict[str, Any]] = []
     MAX_RESULTS = 50
 
-    def _walk(d: Path, depth: int = 0):
-        if depth > 12 or len(results) >= MAX_RESULTS:
-            return
-        try:
-            for entry in sorted(d.iterdir(), key=lambda e: (e.is_dir(), e.name.lower())):
-                if len(results) >= MAX_RESULTS:
-                    return
-                if entry.is_dir(follow_symlinks=False):
-                    if entry.name in _IGNORE_DIRS:
-                        continue
-                    _walk(entry, depth + 1)
-                else:
-                    if q_lower in entry.name.lower():
-                        try:
-                            rel = entry.relative_to(root)
-                        except ValueError:
-                            rel = entry
-                        results.append({
-                            "name": entry.name,
-                            "path": str(entry),
-                            "rel_path": str(rel),
-                        })
-        except PermissionError:
-            pass
+    def _do_walk():
+        def _walk(d: Path, depth: int = 0):
+            if depth > 12 or len(results) >= MAX_RESULTS:
+                return
+            try:
+                for entry in sorted(d.iterdir(), key=lambda e: (e.is_dir(), e.name.lower())):
+                    if len(results) >= MAX_RESULTS:
+                        return
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name in _IGNORE_DIRS:
+                            continue
+                        _walk(entry, depth + 1)
+                    else:
+                        if q_lower in entry.name.lower():
+                            try:
+                                rel = entry.relative_to(root)
+                            except ValueError:
+                                rel = entry
+                            results.append({
+                                "name": entry.name,
+                                "path": str(entry),
+                                "rel_path": str(rel),
+                            })
+            except PermissionError:
+                pass
+        _walk(root)
 
-    _walk(root)
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _do_walk)
     return {"items": results}
 
 
@@ -579,6 +605,7 @@ async def grep_files(
     path: str = "",
     q: str = "",
     case_sensitive: bool = False,
+    workspace: str = "",
 ) -> Dict[str, Any]:
     """Busca texto en el contenido de archivos del workspace."""
     if not q:
@@ -586,15 +613,13 @@ async def grep_files(
     if not path:
         path = str(Path.home())
 
-    try:
-        root = Path(path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    root = _resolve_safe(path, workspace or None)
 
     if not root.is_dir():
         raise HTTPException(status_code=400, detail="La ruta no es un directorio")
 
-    import mimetypes, re as _re
+    import mimetypes
+    import re as _re
 
     pattern_flags = 0 if case_sensitive else _re.IGNORECASE
     try:
@@ -610,7 +635,6 @@ async def grep_files(
     def _is_text(p: Path) -> bool:
         mime, _ = mimetypes.guess_type(str(p))
         if mime is None:
-            # Try by extension whitelist
             return p.suffix.lower() in {
                 '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.json',
                 '.md', '.txt', '.sh', '.yml', '.yaml', '.toml', '.ini', '.cfg',
@@ -623,54 +647,57 @@ async def grep_files(
             "application/x-yaml", "application/toml", "application/x-sh",
         }
 
-    def _walk_grep(d: Path, depth: int = 0):
-        if depth > 12 or len(groups) >= MAX_FILES:
-            return
-        try:
-            for entry in sorted(d.iterdir(), key=lambda e: (e.is_dir(), e.name.lower())):
-                if len(groups) >= MAX_FILES:
-                    return
-                if entry.is_dir(follow_symlinks=False):
-                    if entry.name in _IGNORE_DIRS:
-                        continue
-                    _walk_grep(entry, depth + 1)
-                elif entry.is_file(follow_symlinks=False):
-                    try:
-                        if entry.stat().st_size > MAX_FILE_SIZE_GREP:
+    def _do_grep():
+        def _walk_grep(d: Path, depth: int = 0):
+            if depth > 12 or len(groups) >= MAX_FILES:
+                return
+            try:
+                for entry in sorted(d.iterdir(), key=lambda e: (e.is_dir(), e.name.lower())):
+                    if len(groups) >= MAX_FILES:
+                        return
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name in _IGNORE_DIRS:
                             continue
-                        if not _is_text(entry):
-                            continue
-                        text = entry.read_text(encoding="utf-8", errors="replace")
-                    except (PermissionError, OSError):
-                        continue
-
-                    matches = []
-                    for i, line in enumerate(text.splitlines(), 1):
-                        if len(matches) >= MAX_MATCHES_PER_FILE:
-                            break
-                        m = pattern.search(line)
-                        if m:
-                            matches.append({
-                                "line_no": i,
-                                "line": line[:200],  # truncate long lines
-                                "match_start": m.start(),
-                                "match_end": m.end(),
-                            })
-                    if matches:
+                        _walk_grep(entry, depth + 1)
+                    elif entry.is_file(follow_symlinks=False):
                         try:
-                            rel = entry.relative_to(root)
-                        except ValueError:
-                            rel = entry
-                        groups.append({
-                            "file_name": entry.name,
-                            "file_path": str(entry),
-                            "rel_path": str(rel),
-                            "matches": matches,
-                        })
-        except PermissionError:
-            pass
+                            if entry.stat().st_size > MAX_FILE_SIZE_GREP:
+                                continue
+                            if not _is_text(entry):
+                                continue
+                            text = entry.read_text(encoding="utf-8", errors="replace")
+                        except (PermissionError, OSError):
+                            continue
 
-    _walk_grep(root)
+                        matches = []
+                        for i, line in enumerate(text.splitlines(), 1):
+                            if len(matches) >= MAX_MATCHES_PER_FILE:
+                                break
+                            m = pattern.search(line)
+                            if m:
+                                matches.append({
+                                    "line_no": i,
+                                    "line": line[:200],
+                                    "match_start": m.start(),
+                                    "match_end": m.end(),
+                                })
+                        if matches:
+                            try:
+                                rel = entry.relative_to(root)
+                            except ValueError:
+                                rel = entry
+                            groups.append({
+                                "file_name": entry.name,
+                                "file_path": str(entry),
+                                "rel_path": str(rel),
+                                "matches": matches,
+                            })
+            except PermissionError:
+                pass
+        _walk_grep(root)
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, _do_grep)
     return {"groups": groups, "total_files": len(groups)}
 
 
@@ -681,14 +708,11 @@ async def grep_files(
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
 
 @router.get("/file-content")
-async def read_file_content(path: str) -> Dict[str, Any]:
+async def read_file_content(path: str, workspace: str = "") -> Dict[str, Any]:
     """Lee el contenido de un archivo de texto para el visor."""
     import mimetypes
 
-    try:
-        target = Path(path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    target = _resolve_safe(path, workspace or None)
 
     if not target.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
@@ -754,10 +778,7 @@ async def _git(args: list[str], cwd: str, timeout: float = 8.0) -> tuple[int, st
 def _resolve_repo(path: str) -> Path:
     if not path:
         raise HTTPException(status_code=400, detail="path requerido")
-    try:
-        root = Path(path).expanduser().resolve()
-    except Exception:
-        raise HTTPException(status_code=400, detail="Ruta inválida")
+    root = _resolve_safe(path)
     if not root.is_dir():
         raise HTTPException(status_code=400, detail="La ruta no es un directorio")
     return root

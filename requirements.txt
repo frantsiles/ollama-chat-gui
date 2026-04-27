@@ -1,5 +1,6 @@
 # Core
 requests>=2.32.0
+pathspec>=1.1.0
 
 # Web UI (FastAPI)
 fastapi>=0.109.0

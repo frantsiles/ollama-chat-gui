@@ -280,6 +280,7 @@ const Explorer = {
                 path,
                 show_hidden: this._showHidden ? '1' : '0',
                 use_gitignore: this._useGitignore ? '1' : '0',
+                workspace: this.workspacePath || '',
             });
             const res = await fetch('/api/files?' + params);
             if (!res.ok) throw new Error(await res.text());
@@ -467,7 +468,7 @@ const Explorer = {
                     const res = await fetch('/api/files/move', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ src_path: srcPath, dst_dir: item.path }),
+                        body: JSON.stringify({ src_path: srcPath, dst_dir: item.path, workspace: Explorer.workspacePath || '' }),
                     });
                     const data = await res.json();
                     if (!res.ok) throw new Error(data.detail || 'Error');
@@ -538,7 +539,8 @@ const Explorer = {
         try {
             const form = new FormData();
             files.forEach(f => form.append('files', f));
-            const res = await fetch('/api/files/upload?dir=' + encodeURIComponent(dir), {
+            const res = await fetch('/api/files/upload?dir=' + encodeURIComponent(dir)
+                + '&workspace=' + encodeURIComponent(Explorer.workspacePath || ''), {
                 method: 'POST',
                 body: form,
             });
@@ -813,7 +815,8 @@ const Explorer = {
             return;
         }
         try {
-            const res = await fetch('/api/file-content?path=' + encodeURIComponent(item.path));
+            const res = await fetch('/api/file-content?path=' + encodeURIComponent(item.path)
+                + '&workspace=' + encodeURIComponent(this.workspacePath || ''));
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Error al leer el archivo');
             const blob = new Blob([data.content], { type: 'text/plain' });
@@ -836,7 +839,7 @@ const Explorer = {
             const res = await fetch('/api/files/create', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path }),
+                body: JSON.stringify({ path, workspace: this.workspacePath || '' }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Error');
@@ -854,7 +857,7 @@ const Explorer = {
             const res = await fetch('/api/files/mkdir', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path }),
+                body: JSON.stringify({ path, workspace: this.workspacePath || '' }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Error');
@@ -871,7 +874,7 @@ const Explorer = {
             const res = await fetch('/api/files/rename', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path, new_name: newName.trim() }),
+                body: JSON.stringify({ path, new_name: newName.trim(), workspace: this.workspacePath || '' }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Error');
@@ -884,7 +887,8 @@ const Explorer = {
 
     async _crudDelete(path) {
         try {
-            const res = await fetch('/api/files/delete?path=' + encodeURIComponent(path), {
+            const res = await fetch('/api/files/delete?path=' + encodeURIComponent(path)
+                + '&workspace=' + encodeURIComponent(this.workspacePath || ''), {
                 method: 'DELETE',
             });
             const data = await res.json();
@@ -901,7 +905,7 @@ const Explorer = {
             const res = await fetch('/api/files/duplicate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ path }),
+                body: JSON.stringify({ path, workspace: this.workspacePath || '' }),
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.detail || 'Error');
@@ -1069,7 +1073,9 @@ const FileViewer = {
 
     async _fetch(path) {
         try {
-            const res = await fetch('/api/file-content?path=' + encodeURIComponent(path));
+            const ws = window.Explorer?.workspacePath || '';
+            const res = await fetch('/api/file-content?path=' + encodeURIComponent(path)
+                + '&workspace=' + encodeURIComponent(ws));
             const data = await res.json();
 
             if (!res.ok) {
@@ -1243,7 +1249,9 @@ const QuickOpen = {
         this._results.innerHTML = '<div class="quick-open-loading">Buscando...</div>';
 
         try {
-            const res = await fetch('/api/files/search?path=' + encodeURIComponent(path) + '&q=' + encodeURIComponent(q));
+            const res = await fetch('/api/files/search?path=' + encodeURIComponent(path)
+                + '&q=' + encodeURIComponent(q)
+                + '&workspace=' + encodeURIComponent(path));
             if (!res.ok) throw new Error();
             const data = await res.json();
             this._render(data.items, q);
@@ -1371,7 +1379,7 @@ const SearchPanel = {
 
         try {
             const cs  = this._caseCb.checked ? '1' : '0';
-            const url = `/api/files/grep?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&case_sensitive=${cs}`;
+            const url = `/api/files/grep?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&case_sensitive=${cs}&workspace=${encodeURIComponent(path)}`;
             const res = await fetch(url);
             if (!res.ok) throw new Error();
             const data = await res.json();
