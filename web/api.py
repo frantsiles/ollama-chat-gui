@@ -7,7 +7,10 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File as FastAPIFile
+import json
+
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File as FastAPIFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import ApprovalLevel, OLLAMA_BASE_URL, OperationMode
@@ -723,6 +726,143 @@ async def grep_files(
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(None, _do_grep)
     return {"groups": groups, "total_files": len(groups)}
+
+
+# =============================================================================
+# File Grep – streaming SSE
+# =============================================================================
+
+@router.get("/files/grep/stream")
+async def grep_files_stream(
+    request: Request,
+    path: str = "",
+    q: str = "",
+    case_sensitive: bool = False,
+    workspace: str = "",
+):
+    """Grep streaming vía SSE: emite un evento JSON por archivo con coincidencias."""
+    import mimetypes
+    import re as _re
+
+    def _is_text(p: Path) -> bool:
+        mime, _ = mimetypes.guess_type(str(p))
+        if mime is None:
+            return p.suffix.lower() in {
+                '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.json',
+                '.md', '.txt', '.sh', '.yml', '.yaml', '.toml', '.ini', '.cfg',
+                '.env', '.rs', '.go', '.java', '.c', '.cpp', '.h', '.hpp',
+                '.rb', '.php', '.sql', '.xml', '.tf', '.lua', '.r', '.scala',
+                '.kt', '.swift', '.vim', '.dockerfile', '', '.gitignore',
+            }
+        return mime.startswith("text/") or mime in {
+            "application/json", "application/xml", "application/javascript",
+            "application/x-yaml", "application/toml", "application/x-sh",
+        }
+
+    async def generate():
+        if not q:
+            yield f'data: {json.dumps({"done": True, "total_files": 0, "total_matches": 0})}\n\n'
+            return
+
+        root_path = path or str(Path.home())
+        try:
+            root = _resolve_safe(root_path, workspace or None)
+        except HTTPException:
+            yield f'data: {json.dumps({"error": "Ruta no válida"})}\n\n'
+            return
+
+        if not root.is_dir():
+            yield f'data: {json.dumps({"error": "La ruta no es un directorio"})}\n\n'
+            return
+
+        pattern_flags = 0 if case_sensitive else _re.IGNORECASE
+        try:
+            pattern = _re.compile(_re.escape(q), pattern_flags)
+        except _re.error:
+            yield f'data: {json.dumps({"error": "Patrón inválido"})}\n\n'
+            return
+
+        MAX_FILE_SIZE_GREP = 512 * 1024
+        MAX_MATCHES_PER_FILE = 30
+        BATCH = 20
+
+        # Collect candidate file paths (fast, no I/O per file)
+        all_paths: list[Path] = []
+
+        def collect(d: Path, depth: int = 0):
+            if depth > 12:
+                return
+            try:
+                for entry in sorted(d.iterdir(), key=lambda e: (e.is_dir(), e.name.lower())):
+                    if entry.is_dir(follow_symlinks=False):
+                        if entry.name not in _IGNORE_DIRS:
+                            collect(entry, depth + 1)
+                    elif entry.is_file(follow_symlinks=False):
+                        all_paths.append(entry)
+            except PermissionError:
+                pass
+
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, collect, root)
+
+        total_files = 0
+        total_matches = 0
+
+        for i in range(0, len(all_paths), BATCH):
+            if await request.is_disconnected():
+                return
+
+            batch = all_paths[i : i + BATCH]
+
+            def process_batch(paths: list[Path]) -> list[dict]:
+                results = []
+                for entry in paths:
+                    try:
+                        if entry.stat().st_size > MAX_FILE_SIZE_GREP:
+                            continue
+                        if not _is_text(entry):
+                            continue
+                        text = entry.read_text(encoding="utf-8", errors="replace")
+                    except (PermissionError, OSError):
+                        continue
+
+                    matches = []
+                    for line_no, line in enumerate(text.splitlines(), 1):
+                        if len(matches) >= MAX_MATCHES_PER_FILE:
+                            break
+                        m = pattern.search(line)
+                        if m:
+                            matches.append({
+                                "line_no": line_no,
+                                "line": line[:200],
+                                "match_start": m.start(),
+                                "match_end": m.end(),
+                            })
+                    if matches:
+                        try:
+                            rel = entry.relative_to(root)
+                        except ValueError:
+                            rel = entry
+                        results.append({
+                            "file_name": entry.name,
+                            "file_path": str(entry),
+                            "rel_path": str(rel),
+                            "matches": matches,
+                        })
+                return results
+
+            for group in await loop.run_in_executor(None, process_batch, batch):
+                total_files += 1
+                total_matches += len(group["matches"])
+                yield f'data: {json.dumps(group)}\n\n'
+
+        yield f'data: {json.dumps({"done": True, "total_files": total_files, "total_matches": total_matches})}\n\n'
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # =============================================================================

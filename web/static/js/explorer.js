@@ -1463,7 +1463,8 @@ window.QuickOpen = QuickOpen;
 
 const SearchPanel = {
     _debounce: null,
-    _groupStates: {},   // rel_path → collapsed bool
+    _ctrl: null,         // AbortController for in-flight stream
+    _groupStates: {},    // rel_path → collapsed bool
 
     init() {
         this._input      = document.getElementById('search-panel-query');
@@ -1497,6 +1498,10 @@ const SearchPanel = {
         const q    = this._input.value.trim();
         const path = Explorer.workspacePath;
 
+        // Cancel any in-flight search
+        this._ctrl?.abort();
+        this._ctrl = new AbortController();
+
         if (!q) {
             this._status.textContent = '';
             this._results.innerHTML = '<div class="search-panel-empty">Escribe para buscar en archivos</div>';
@@ -1511,71 +1516,96 @@ const SearchPanel = {
         this._status.textContent = 'Buscando…';
         this._results.innerHTML = '';
 
+        const cs  = this._caseCb.checked ? '1' : '0';
+        const url = `/api/files/grep/stream?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&case_sensitive=${cs}&workspace=${encodeURIComponent(path)}`;
+
         try {
-            const cs  = this._caseCb.checked ? '1' : '0';
-            const url = `/api/files/grep?path=${encodeURIComponent(path)}&q=${encodeURIComponent(q)}&case_sensitive=${cs}&workspace=${encodeURIComponent(path)}`;
-            const res = await fetch(url);
-            if (!res.ok) throw new Error();
-            const data = await res.json();
-            this._render(data.groups, q);
-        } catch {
+            const res = await fetch(url, { signal: this._ctrl.signal });
+            if (!res.ok) throw new Error('server-error');
+
+            const reader  = res.body.getReader();
+            const decoder = new TextDecoder();
+            let   buffer  = '';
+            let   fileCount = 0;
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop(); // keep incomplete line in buffer
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    let payload;
+                    try { payload = JSON.parse(line.slice(6)); } catch { continue; }
+
+                    if (payload.done) {
+                        if (fileCount === 0) {
+                            this._status.textContent = 'Sin resultados';
+                            this._results.innerHTML = '<div class="search-panel-no-results">No se encontró ninguna coincidencia</div>';
+                        } else {
+                            const tm = payload.total_matches;
+                            const tf = payload.total_files;
+                            this._status.textContent = `${tm} resultado${tm !== 1 ? 's' : ''} en ${tf} archivo${tf !== 1 ? 's' : ''}`;
+                        }
+                    } else if (payload.error) {
+                        this._status.textContent = payload.error;
+                    } else {
+                        fileCount++;
+                        this._status.textContent = `Buscando… ${fileCount} archivo${fileCount !== 1 ? 's' : ''}`;
+                        this._renderGroup(payload, q);
+                    }
+                }
+            }
+        } catch (e) {
+            if (e.name === 'AbortError') return;
             this._status.textContent = 'Error al buscar';
         }
     },
 
-    _render(groups, q) {
-        if (!groups.length) {
-            this._status.textContent = 'Sin resultados';
-            this._results.innerHTML = '<div class="search-panel-no-results">No se encontró ninguna coincidencia</div>';
-            return;
-        }
+    _renderGroup(group, q) {
+        const collapsed = this._groupStates[group.rel_path] ?? false;
+        const el = document.createElement('div');
+        el.className = 'search-group';
 
-        const totalMatches = groups.reduce((s, g) => s + g.matches.length, 0);
-        this._status.textContent = `${totalMatches} resultado${totalMatches !== 1 ? 's' : ''} en ${groups.length} archivo${groups.length !== 1 ? 's' : ''}`;
-        this._results.innerHTML = '';
+        const header = document.createElement('div');
+        header.className = 'search-group-header';
+        header.innerHTML = `
+            <svg class="search-group-chevron${collapsed ? ' collapsed' : ''}" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="9 18 15 12 9 6"/>
+            </svg>
+            <span class="search-group-filename">${Utils.escapeHtml(group.file_name)}</span>
+            <span class="search-group-relpath">${Utils.escapeHtml(group.rel_path)}</span>
+            <span class="search-group-count">${group.matches.length}</span>
+        `;
 
-        groups.forEach(group => {
-            const collapsed = this._groupStates[group.rel_path] ?? false;
-            const el = document.createElement('div');
-            el.className = 'search-group';
+        const matchList = document.createElement('div');
+        matchList.className = 'search-group-matches' + (collapsed ? ' collapsed' : '');
 
-            const header = document.createElement('div');
-            header.className = 'search-group-header';
-            header.innerHTML = `
-                <svg class="search-group-chevron${collapsed ? ' collapsed' : ''}" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                    <polyline points="9 18 15 12 9 6"/>
-                </svg>
-                <span class="search-group-filename">${Utils.escapeHtml(group.file_name)}</span>
-                <span class="search-group-relpath">${Utils.escapeHtml(group.rel_path)}</span>
-                <span class="search-group-count">${group.matches.length}</span>
-            `;
-
-            const matchList = document.createElement('div');
-            matchList.className = 'search-group-matches' + (collapsed ? ' collapsed' : '');
-
-            header.addEventListener('click', () => {
-                const isCollapsed = matchList.classList.toggle('collapsed');
-                header.querySelector('.search-group-chevron').classList.toggle('collapsed', isCollapsed);
-                this._groupStates[group.rel_path] = isCollapsed;
-            });
-
-            group.matches.forEach(m => {
-                const row = document.createElement('div');
-                row.className = 'search-match-row';
-                row.innerHTML = `
-                    <span class="search-match-lineno">${m.line_no}</span>
-                    <span class="search-match-line">${this._highlightLine(m.line, m.match_start, m.match_end)}</span>
-                `;
-                row.addEventListener('click', () => {
-                    FileViewer.open(group.file_path, group.file_name);
-                });
-                matchList.appendChild(row);
-            });
-
-            el.appendChild(header);
-            el.appendChild(matchList);
-            this._results.appendChild(el);
+        header.addEventListener('click', () => {
+            const isCollapsed = matchList.classList.toggle('collapsed');
+            header.querySelector('.search-group-chevron').classList.toggle('collapsed', isCollapsed);
+            this._groupStates[group.rel_path] = isCollapsed;
         });
+
+        group.matches.forEach(m => {
+            const row = document.createElement('div');
+            row.className = 'search-match-row';
+            row.innerHTML = `
+                <span class="search-match-lineno">${m.line_no}</span>
+                <span class="search-match-line">${this._highlightLine(m.line, m.match_start, m.match_end)}</span>
+            `;
+            row.addEventListener('click', () => {
+                FileViewer.open(group.file_path, group.file_name);
+            });
+            matchList.appendChild(row);
+        });
+
+        el.appendChild(header);
+        el.appendChild(matchList);
+        this._results.appendChild(el);
     },
 
     _highlightLine(line, start, end) {
