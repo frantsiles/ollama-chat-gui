@@ -39,7 +39,7 @@ MAX_SCAN_RESULTS = 300
 MAX_READ_CHARS = 30000
 MAX_COMMAND_OUTPUT_CHARS = 30000
 COMMAND_TIMEOUT_SECONDS: int = int(os.getenv("COMMAND_TIMEOUT_SECONDS", "120"))
-PYTHON_SANDBOX_TIMEOUT_SECONDS: int = int(os.getenv("PYTHON_SANDBOX_TIMEOUT_SECONDS", "15"))
+PYTHON_SANDBOX_TIMEOUT_SECONDS: int = int(os.getenv("PYTHON_SANDBOX_TIMEOUT_SECONDS", "30"))
 
 # =============================================================================
 # Agent Configuration

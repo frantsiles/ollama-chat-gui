@@ -374,12 +374,17 @@
 
 .git-commit-section[hidden] { display: none; }
 
+.git-commit-textarea-wrap {
+    position: relative;
+    display: flex;
+}
+
 .git-commit-input {
     width: 100%;
     background: var(--bg-tertiary);
     border: 1px solid var(--border-primary);
     border-radius: var(--radius-md);
-    padding: 6px 8px;
+    padding: 6px 30px 6px 8px;
     color: var(--text-primary);
     font-size: var(--text-sm);
     font-family: var(--font-sans, inherit);
@@ -395,6 +400,50 @@
 
 .git-commit-input::placeholder {
     color: var(--text-tertiary);
+}
+
+.git-ai-msg-btn {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--accent-primary);
+    cursor: pointer;
+    padding: 0;
+    opacity: 0.7;
+    transition: opacity var(--transition-fast), background var(--transition-fast);
+}
+
+.git-ai-msg-btn:hover {
+    opacity: 1;
+    background: var(--bg-hover);
+}
+
+.git-ai-msg-btn--loading svg {
+    animation: fv-spin 0.8s linear infinite;
+    opacity: 0.5;
+}
+
+.cfg-hint {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    margin: 0 0 6px 0;
+    line-height: 1.5;
+}
+
+.cfg-hint code {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+    padding: 0 3px;
+    font-family: var(--font-mono);
 }
 
 /* =============================================================================

@@ -2,6 +2,21 @@
  * GitPanel — sidebar Git panel with full repo management.
  */
 
+// Default prompt used to generate commit messages via AI.
+// Stored here so GitPanel and the settings UI can reference the same value.
+const GIT_DEFAULT_COMMIT_PROMPT =
+    "Genera un mensaje de commit git conciso y descriptivo para el siguiente diff.\n\n" +
+    "Reglas:\n" +
+    "- Usa formato Conventional Commits: tipo(alcance): descripción\n" +
+    "- Primera línea máximo 72 caracteres\n" +
+    "- Sé específico sobre qué cambió y por qué\n" +
+    "- Usa modo imperativo (add, fix, update, remove, refactor)\n" +
+    "- Sin punto final\n" +
+    "- Responde SOLO el mensaje de commit, sin explicaciones ni markdown\n\n" +
+    "Diff:\n{diff}";
+
+const COMMIT_PROMPT_KEY = 'ollama_chat_commit_prompt';
+
 const GitPanel = {
     _wsPath: null,
     _isGit: false,
@@ -73,6 +88,7 @@ const GitPanel = {
         document.getElementById('git-push-btn')?.addEventListener('click', () => this._push());
         document.getElementById('git-pull-btn')?.addEventListener('click', () => this._pull());
         document.getElementById('git-commit-btn')?.addEventListener('click', () => this._commit());
+        document.getElementById('git-generate-msg-btn')?.addEventListener('click', () => this._generateCommitMsg());
 
         document.getElementById('git-stage-all-btn')?.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -474,6 +490,53 @@ const GitPanel = {
                 if (ok) this.refresh();
             }
         );
+    },
+
+    _generateAbortCtrl: null,
+
+    async _generateCommitMsg() {
+        const btn = document.getElementById('git-generate-msg-btn');
+        if (!btn) return;
+
+        // Cancel any in-flight request before starting a new one
+        if (this._generateAbortCtrl) {
+            this._generateAbortCtrl.abort();
+        }
+        this._generateAbortCtrl = new AbortController();
+
+        btn.disabled = true;
+        btn.classList.add('git-ai-msg-btn--loading');
+
+        const customPrompt = localStorage.getItem(COMMIT_PROMPT_KEY) || '';
+        const sessionId = window.wsManager?.sessionId || '';
+
+        try {
+            const res = await fetch('/api/git/generate-commit-msg', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    path: this._wsPath,
+                    session_id: sessionId,
+                    prompt: customPrompt,
+                }),
+                signal: this._generateAbortCtrl.signal,
+            });
+            const data = await res.json();
+            if (!res.ok) {
+                Utils.showToast(data.detail || 'Error generando mensaje', 'error');
+            } else {
+                const ta = document.getElementById('git-commit-msg');
+                if (ta) { ta.value = data.message; ta.focus(); }
+            }
+        } catch (err) {
+            if (err.name !== 'AbortError') {
+                Utils.showToast('Error de red: ' + String(err), 'error');
+            }
+        } finally {
+            this._generateAbortCtrl = null;
+            btn.disabled = false;
+            btn.classList.remove('git-ai-msg-btn--loading');
+        }
     },
 
     async _commit() {

@@ -15,6 +15,7 @@ from config import (
     MAX_AGENT_STEPS,
     OLLAMA_DEFAULT_MODEL,
     OperationMode,
+    PYTHON_SANDBOX_TIMEOUT_SECONDS,
 )
 from core.models import Conversation, Message, MessageRole
 
@@ -33,6 +34,7 @@ class Session:
     approval_level: str = ApprovalLevel.WRITE_ONLY
     max_agent_steps: int = MAX_AGENT_STEPS
     agent_task_timeout: int = AGENT_TASK_TIMEOUT
+    python_sandbox_timeout: int = PYTHON_SANDBOX_TIMEOUT_SECONDS
     system_prompt: str = ""
     pending_approval: Optional[Dict[str, Any]] = None
     current_plan: Optional[Dict[str, Any]] = None
@@ -58,6 +60,7 @@ class Session:
             "approval_level": self.approval_level,
             "max_agent_steps": self.max_agent_steps,
             "agent_task_timeout": self.agent_task_timeout,
+            "python_sandbox_timeout": self.python_sandbox_timeout,
             "system_prompt": self.system_prompt,
             "active_skill": self.active_skill,
             "pending_approval": self.pending_approval,
@@ -179,6 +182,7 @@ class SessionManager:
             "approval_level": session.approval_level,
             "max_agent_steps": session.max_agent_steps,
             "agent_task_timeout": session.agent_task_timeout,
+            "python_sandbox_timeout": session.python_sandbox_timeout,
             "system_prompt": session.system_prompt,
             "active_skill": session.active_skill,
             "context_summary": session.context_summary,
@@ -239,6 +243,7 @@ class SessionManager:
             approval_level=meta.get("approval_level", ApprovalLevel.WRITE_ONLY),
             max_agent_steps=int(meta.get("max_agent_steps", MAX_AGENT_STEPS)),
             agent_task_timeout=int(meta.get("agent_task_timeout", AGENT_TASK_TIMEOUT)),
+            python_sandbox_timeout=int(meta.get("python_sandbox_timeout", PYTHON_SANDBOX_TIMEOUT_SECONDS)),
             system_prompt=meta.get("system_prompt", ""),
             active_skill=meta.get("active_skill"),
             context_summary=meta.get("context_summary", ""),

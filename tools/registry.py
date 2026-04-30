@@ -69,6 +69,12 @@ class ToolRegistry:
         self.current_cwd = new_cwd.resolve()
         # Invalidar instancias para que se recreen con el nuevo cwd
         self._instances.clear()
+
+    def set_python_timeout(self, seconds: int) -> None:
+        """Aplica un timeout personalizado a ExecutePythonTool."""
+        tool = self.get_tool("execute_python")
+        if tool:
+            tool.timeout = seconds  # type: ignore[attr-defined]
     
     def get_tool(self, name: str) -> Optional[BaseTool]:
         """

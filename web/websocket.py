@@ -191,6 +191,7 @@ async def handle_chat_message(
         agent.approval_manager.set_level(session.approval_level)
         agent._context_summary = session.context_summary
         agent._max_agent_steps = session.max_agent_steps
+        agent.tool_registry.set_python_timeout(session.python_sandbox_timeout)
         # Inyectar skill activo al comienzo de las instrucciones
         if session.active_skill:
             from tools.skills_manager import SkillsManager
@@ -482,7 +483,8 @@ async def handle_approval(
     agent.approval_manager.set_level(session.approval_level)
     agent._context_summary = session.context_summary
     agent._max_agent_steps = session.max_agent_steps
-    
+    agent.tool_registry.set_python_timeout(session.python_sandbox_timeout)
+
     pending_tool_data = session.pending_approval.get("tool_call_data")
     if not pending_tool_data:
         await websocket.send_json({

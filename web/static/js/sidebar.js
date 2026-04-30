@@ -23,6 +23,8 @@ const Sidebar = {
         this.stepsValue        = document.getElementById('steps-value');
         this.agentTaskTimeout  = document.getElementById('agent-task-timeout');
         this.timeoutValue      = document.getElementById('timeout-value');
+        this.pythonSandboxTimeout = document.getElementById('python-sandbox-timeout');
+        this.pythonTimeoutValue   = document.getElementById('python-timeout-value');
         this.traceList         = document.getElementById('trace-list');
         this.systemPromptInput = document.getElementById('system-prompt-input');
         this.systemPromptChars = document.getElementById('system-prompt-chars');
@@ -117,6 +119,20 @@ const Sidebar = {
             this._saveSettings({ agentTaskTimeout: val });
         });
 
+        // Python sandbox timeout
+        if (this.pythonSandboxTimeout) {
+            this.pythonSandboxTimeout.addEventListener('input', (e) => {
+                if (this.pythonTimeoutValue) this.pythonTimeoutValue.textContent = e.target.value;
+            });
+            this.pythonSandboxTimeout.addEventListener('change', (e) => {
+                const val = Math.max(5, Math.min(300, parseInt(e.target.value, 10) || 30));
+                e.target.value = val;
+                if (this.pythonTimeoutValue) this.pythonTimeoutValue.textContent = val;
+                this.updateConfig({ python_sandbox_timeout: val });
+                this._saveSettings({ pythonSandboxTimeout: val });
+            });
+        }
+
         // System prompt
         if (this.systemPromptInput) {
             this.systemPromptInput.addEventListener('input', () => {
@@ -144,6 +160,35 @@ const Sidebar = {
                 if (window.Explorer) Explorer.setWorkspace(path);
             }
         });
+
+        // Commit prompt settings
+        const commitPromptInput = document.getElementById('commit-prompt-input');
+        const commitPromptSave  = document.getElementById('commit-prompt-save');
+        const commitPromptReset = document.getElementById('commit-prompt-reset');
+
+        if (commitPromptInput) {
+            const stored = localStorage.getItem('ollama_chat_commit_prompt');
+            if (stored) {
+                commitPromptInput.value = stored;
+            }
+            // The textarea placeholder already shows the hint; the default runs server-side.
+        }
+        if (commitPromptSave) {
+            commitPromptSave.addEventListener('click', () => {
+                const val = commitPromptInput?.value.trim() || '';
+                if (!val) { Utils.showToast('El prompt no puede estar vacío', 'error'); return; }
+                if (!val.includes('{diff}')) { Utils.showToast('El prompt debe incluir {diff}', 'error'); return; }
+                localStorage.setItem('ollama_chat_commit_prompt', val);
+                Utils.showToast('Prompt de commit guardado', 'success');
+            });
+        }
+        if (commitPromptReset) {
+            commitPromptReset.addEventListener('click', () => {
+                localStorage.removeItem('ollama_chat_commit_prompt');
+                if (commitPromptInput) commitPromptInput.value = '';
+                Utils.showToast('Prompt restaurado al valor por defecto', 'success');
+            });
+        }
 
         // Explorer toolbar buttons
         const homeBtn = document.getElementById('explorer-nav-home');
@@ -249,6 +294,11 @@ const Sidebar = {
             this.agentTaskTimeout.value = val;
             if (this.timeoutValue) this.timeoutValue.textContent = val;
         }
+        if (settings.pythonSandboxTimeout !== undefined && this.pythonSandboxTimeout) {
+            const val = settings.pythonSandboxTimeout;
+            this.pythonSandboxTimeout.value = val;
+            if (this.pythonTimeoutValue) this.pythonTimeoutValue.textContent = val;
+        }
         if (settings.workspacePath) {
             this.workspacePath.textContent = Utils.truncatePath(settings.workspacePath, 40);
         }
@@ -288,6 +338,11 @@ const Sidebar = {
                     this.agentTaskTimeout.value = config.agent_task_timeout;
                     if (this.timeoutValue) this.timeoutValue.textContent = config.agent_task_timeout;
                     this._saveSettings({ agentTaskTimeout: config.agent_task_timeout });
+                }
+                if (config.python_sandbox_timeout !== undefined && this.pythonSandboxTimeout) {
+                    this.pythonSandboxTimeout.value = config.python_sandbox_timeout;
+                    if (this.pythonTimeoutValue) this.pythonTimeoutValue.textContent = config.python_sandbox_timeout;
+                    this._saveSettings({ pythonSandboxTimeout: config.python_sandbox_timeout });
                 }
                 if (config.workspace_root) {
                     this._saveSettings({ workspacePath: config.workspace_root });

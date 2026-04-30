@@ -29,6 +29,10 @@ class ExecutePythonTool(BaseTool):
     # Puede escribir archivos → se trata como operación de escritura
     is_write_operation = True
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.timeout: int = PYTHON_SANDBOX_TIMEOUT_SECONDS
+
     def get_parameters(self) -> List[ToolParameter]:
         return [
             ToolParameter(
@@ -51,7 +55,7 @@ class ExecutePythonTool(BaseTool):
                 [sys.executable, "-c", code_clean],
                 capture_output=True,
                 text=True,
-                timeout=PYTHON_SANDBOX_TIMEOUT_SECONDS,
+                timeout=self.timeout,
                 cwd=self.current_cwd,
                 check=False,
             )
@@ -59,7 +63,7 @@ class ExecutePythonTool(BaseTool):
             return ToolResult(
                 success=False,
                 output="",
-                error=f"El código superó el límite de {PYTHON_SANDBOX_TIMEOUT_SECONDS}s.",
+                error=f"El código superó el límite de {self.timeout}s.",
             )
         except Exception as exc:
             return ToolResult(

@@ -329,6 +329,30 @@
                             </div>
                         </div>
 
+                        <!-- Commit message prompt -->
+                        <div class="panel-section">
+                            <div class="panel-section-header" data-target="cfg-commit-prompt">
+                                <span>Prompt de commit IA</span>
+                                <svg class="panel-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                            <div class="panel-section-body" id="cfg-commit-prompt">
+                                <p class="cfg-hint">Plantilla usada para generar mensajes de commit. Usa <code>{diff}</code> donde quieras insertar el diff.</p>
+                                <textarea
+                                    id="commit-prompt-input"
+                                    class="system-prompt-textarea"
+                                    rows="7"
+                                    spellcheck="false"
+                                    placeholder="Vacío = se usa el prompt por defecto del sistema"
+                                ></textarea>
+                                <div class="system-prompt-footer">
+                                    <button type="button" id="commit-prompt-reset" class="btn btn-secondary btn-sm">Restaurar por defecto</button>
+                                    <button type="button" id="commit-prompt-save" class="btn btn-primary btn-sm">Guardar</button>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Max Agent Steps + Timeout -->
                         <div class="panel-section">
                             <div class="panel-section-header" data-target="cfg-steps">
@@ -359,6 +383,17 @@
                                            title="Tiempo máximo total de la tarea (30–3600 s)"
                                            placeholder="300">
                                     <div class="cfg-steps-hint">Segundos antes de cancelar automáticamente</div>
+                                </div>
+                                <div class="cfg-steps-row">
+                                    <label for="python-sandbox-timeout" class="cfg-steps-label">
+                                        Sandbox Python (s) <span id="python-timeout-value" class="badge">30</span>
+                                    </label>
+                                    <input type="number" id="python-sandbox-timeout"
+                                           class="cfg-steps-input"
+                                           min="5" max="300" step="5" value="30"
+                                           title="Tiempo máximo por ejecución de código Python (5–300 s)"
+                                           placeholder="30">
+                                    <div class="cfg-steps-hint">Límite por ejecución de código Python</div>
                                 </div>
                             </div>
                         </div>
@@ -589,7 +624,14 @@
 
                         <!-- Commit box -->
                         <div class="git-section git-commit-section" id="git-commit-section" hidden>
-                            <textarea id="git-commit-msg" class="git-commit-input" placeholder="Mensaje del commit…" rows="2" spellcheck="false"></textarea>
+                            <div class="git-commit-textarea-wrap">
+                                <textarea id="git-commit-msg" class="git-commit-input" placeholder="Mensaje del commit…" rows="2" spellcheck="false"></textarea>
+                                <button type="button" class="git-ai-msg-btn" id="git-generate-msg-btn" title="Generar mensaje con IA">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 2L15.09 8.26L22 9.27L17 14.14L18.18 21.02L12 17.77L5.82 21.02L7 14.14L2 9.27L8.91 8.26L12 2Z"/>
+                                    </svg>
+                                </button>
+                            </div>
                             <div class="git-row-actions">
                                 <label class="git-check-label" title="Modificar el último commit">
                                     <input type="checkbox" id="git-amend-check" />
@@ -1066,6 +1108,13 @@
                 </div>
                 <div class="file-viewer-actions">
                     <span class="file-viewer-meta" id="file-viewer-meta"></span>
+                    <button class="file-viewer-preview-btn fv-hidden" id="file-viewer-preview-btn" title="Vista previa renderizada">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                            <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                        Preview
+                    </button>
                     <button class="file-viewer-copy-btn" id="file-viewer-copy" title="Copiar contenido">
                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <rect x="9" y="9" width="13" height="13" rx="2" ry="2"/>
@@ -1085,11 +1134,12 @@
                     <div class="file-viewer-spinner"></div>
                     <span>Cargando archivo...</span>
                 </div>
-                <div class="file-viewer-error" id="file-viewer-error" style="display:none"></div>
-                <div class="file-viewer-content" id="file-viewer-content" style="display:none">
+                <div class="file-viewer-error fv-hidden" id="file-viewer-error"></div>
+                <div class="file-viewer-content fv-hidden" id="file-viewer-content">
                     <div class="file-viewer-lines" id="file-viewer-lines" aria-hidden="true"></div>
                     <pre class="file-viewer-pre"><code id="file-viewer-code"></code></pre>
                 </div>
+                <div class="file-viewer-preview fv-hidden" id="file-viewer-preview"></div>
             </div>
         </div>
     </div>
@@ -1140,6 +1190,7 @@
     <script src="/static/js/shortcuts.js"></script>
     <script src="/static/js/plan.js"></script>
     <script src="/static/js/mcp.js"></script>
+    <script src="/static/js/file-viewer.js"></script>
     <script src="/static/js/explorer.js"></script>
     <script src="/static/js/git.js"></script>
     <script src="/static/js/app.js"></script>

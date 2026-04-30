@@ -39,6 +39,7 @@ class ConfigUpdate(BaseModel):
     approval_level: Optional[str] = None
     max_agent_steps: Optional[int] = None
     agent_task_timeout: Optional[int] = None
+    python_sandbox_timeout: Optional[int] = None
     system_prompt: Optional[str] = None
     active_skill: Optional[str] = None  # "" para desactivar
 
@@ -168,6 +169,7 @@ async def get_config(session_id: str) -> Dict[str, Any]:
         "approval_level": session.approval_level,
         "max_agent_steps": session.max_agent_steps,
         "agent_task_timeout": session.agent_task_timeout,
+        "python_sandbox_timeout": session.python_sandbox_timeout,
         "system_prompt": session.system_prompt,
         "modes": [OperationMode.CHAT, OperationMode.AGENT, OperationMode.PLAN],
         "approval_levels": [ApprovalLevel.NONE, ApprovalLevel.WRITE_ONLY, ApprovalLevel.ALL],
@@ -200,6 +202,8 @@ async def update_config(session_id: str, data: ConfigUpdate) -> Dict[str, Any]:
         session.max_agent_steps = max(1, min(500, data.max_agent_steps))
     if data.agent_task_timeout is not None:
         session.agent_task_timeout = max(30, min(3600, data.agent_task_timeout))
+    if data.python_sandbox_timeout is not None:
+        session.python_sandbox_timeout = max(5, min(300, data.python_sandbox_timeout))
     if data.system_prompt is not None:
         session.system_prompt = data.system_prompt[:4000]  # razonable upper bound
     if data.active_skill is not None:
@@ -1026,6 +1030,53 @@ async def grep_files_stream(
 
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
 
+# Extensions always treated as readable text, regardless of MIME type.
+# Add new entries here to support additional file types.
+_TEXT_EXTENSIONS: frozenset[str] = frozenset({
+    # Source code
+    "py", "pyw", "js", "mjs", "cjs", "ts", "tsx", "jsx",
+    "rs", "go", "java", "kt", "kts", "swift", "rb", "php", "lua",
+    "cs", "vb", "fs", "fsx", "cpp", "cc", "cxx", "c", "h", "hpp",
+    "r", "scala", "clj", "cljs", "ex", "exs", "erl", "hrl",
+    "ml", "mli", "hs", "lhs", "elm", "d", "dart", "nim", "zig",
+    # Web
+    "html", "htm", "css", "scss", "sass", "less", "svelte", "vue",
+    # Data / config
+    "json", "json5", "jsonc", "yaml", "yml", "toml", "ini", "cfg",
+    "xml", "xsd", "xsl", "xslt", "config", "conf", "properties",
+    "plist", "env", "envrc",
+    # DB / query
+    "sql", "psql", "graphql", "gql",
+    # Shell / scripts
+    "sh", "bash", "zsh", "fish", "ps1", "bat", "cmd",
+    # Docs
+    "md", "mdx", "rst", "txt", "log", "adoc", "tex",
+    # Build / infra
+    "tf", "hcl", "gradle", "cmake", "mk",
+    # Other text
+    "csv", "tsv", "lock", "diff", "patch", "proto", "thrift",
+})
+
+# Exact filenames (case-insensitive) always treated as readable text.
+# Handles files without extension or with non-standard extensions.
+_TEXT_FILENAMES: frozenset[str] = frozenset({
+    "dockerfile", "makefile", "rakefile", "gemfile", "podfile",
+    "vagrantfile", "jenkinsfile", "brewfile", "procfile",
+    ".gitignore", ".gitattributes", ".gitmodules", ".gitconfig",
+    ".editorconfig", ".prettierrc", ".eslintrc", ".babelrc",
+    ".env", ".env.local", ".env.example", ".npmrc", ".nvmrc",
+    ".python-version", ".ruby-version",
+    "requirements.txt", "pipfile", "setup.py", "setup.cfg", "pyproject.toml",
+    "package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+    "cargo.toml", "cargo.lock", "go.mod", "go.sum",
+    "web.config", "app.config", "appsettings.json",
+    "nginx.conf", "apache.conf", "httpd.conf", ".htaccess",
+    "cmakelists.txt",
+    "license", "licence", "copying", "authors", "contributors",
+    "changelog", "readme", "todo", "notes",
+})
+
+
 @router.get("/file-content")
 async def read_file_content(path: str, workspace: str = "") -> Dict[str, Any]:
     """Lee el contenido de un archivo de texto para el visor."""
@@ -1045,27 +1096,30 @@ async def read_file_content(path: str, workspace: str = "") -> Dict[str, Any]:
             detail=f"Archivo demasiado grande ({size // 1024} KB). Límite: {MAX_FILE_SIZE // 1024} KB"
         )
 
-    mime, _ = mimetypes.guess_type(str(target))
-    is_binary = mime and not (
-        mime.startswith("text/") or
-        mime in {"application/json", "application/xml", "application/javascript",
-                 "application/x-yaml", "application/toml", "application/x-sh"}
-    )
+    name_lower = target.name.lower()
+    ext_lower = target.suffix.lstrip(".").lower()
 
-    if is_binary:
-        raise HTTPException(status_code=415, detail="Archivo binario no soportado")
+    # Known text file by name or extension — skip MIME check entirely
+    is_known_text = name_lower in _TEXT_FILENAMES or ext_lower in _TEXT_EXTENSIONS
+    if not is_known_text:
+        mime, _ = mimetypes.guess_type(str(target))
+        is_binary = mime and not (
+            mime.startswith("text/") or
+            mime in {"application/json", "application/xml", "application/javascript",
+                     "application/x-yaml", "application/toml", "application/x-sh"}
+        )
+        if is_binary:
+            raise HTTPException(status_code=415, detail="Archivo binario no soportado")
 
     try:
         content = target.read_text(encoding="utf-8", errors="replace")
     except PermissionError:
         raise HTTPException(status_code=403, detail="Permiso denegado")
 
-    ext = target.suffix.lstrip(".").lower()
-
     return {
         "path": str(target),
         "name": target.name,
-        "ext": ext,
+        "ext": ext_lower,
         "size": size,
         "content": content,
         "lines": content.count("\n") + 1,
@@ -1350,6 +1404,61 @@ async def git_discard(body: GitPathBody) -> Dict[str, Any]:
     if rc != 0:
         raise HTTPException(status_code=500, detail=err.strip())
     return {"discarded": files}
+
+
+class GitGenerateMsgBody(BaseModel):
+    path: str
+    session_id: str = ""
+    prompt: str = ""
+
+
+@router.post("/git/generate-commit-msg")
+async def git_generate_commit_msg(body: GitGenerateMsgBody) -> Dict[str, Any]:
+    """Genera un mensaje de commit usando el LLM a partir del diff staged."""
+    root = _resolve_repo(body.path)
+
+    # Get staged diff; fall back to full diff if nothing staged
+    _, staged_diff, _ = await _git(["diff", "--staged"], str(root))
+    if not staged_diff.strip():
+        _, staged_diff, _ = await _git(["diff"], str(root))
+    if not staged_diff.strip():
+        raise HTTPException(status_code=400, detail="No hay cambios para analizar")
+
+    # Resolve model from session
+    session = SessionManager.get(body.session_id) if body.session_id else None
+    model = session.model if session else "llama3.2"
+
+    default_prompt = (
+        "Genera un mensaje de commit git conciso y descriptivo para el siguiente diff.\n\n"
+        "Reglas:\n"
+        "- Usa formato Conventional Commits: tipo(alcance): descripción\n"
+        "- Primera línea máximo 72 caracteres\n"
+        "- Sé específico sobre qué cambió y por qué\n"
+        "- Usa modo imperativo (add, fix, update, remove, refactor)\n"
+        "- Sin punto final\n"
+        "- Responde SOLO el mensaje de commit, sin explicaciones ni markdown\n\n"
+        "Diff:\n{diff}"
+    )
+
+    prompt_template = body.prompt.strip() if body.prompt.strip() else default_prompt
+    full_prompt = prompt_template.replace("{diff}", staged_diff[:8000])
+
+    try:
+        client = OllamaClient(base_url=OLLAMA_BASE_URL)
+        message = client.chat(
+            model=model,
+            messages=[{"role": "user", "content": full_prompt}],
+            options={"temperature": 0.3},
+        )
+        # Keep only the first non-empty line — models often return multiple
+        # alternatives or add explanatory text after the commit message.
+        first_line = next(
+            (l.strip() for l in message.splitlines() if l.strip()),
+            message.strip(),
+        )
+        return {"message": first_line}
+    except OllamaClientError as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/git/commit")

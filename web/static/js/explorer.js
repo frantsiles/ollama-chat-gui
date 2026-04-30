@@ -1145,12 +1145,19 @@ window.ExplorerDialog = ExplorerDialog;
 
 const FileViewer = {
     _currentContent: '',
-    _hljsPromise: null,   // null = not started, Promise = in-flight or resolved
+    _hljsPromise: null,
+    _markedPromise: null,
+    _mermaidPromise: null,
+    _previewMode: false,
+    _currentConfig: null,
+
+    // ------------------------------------------------------------------
+    // Lazy loaders for external libraries
+    // ------------------------------------------------------------------
 
     _loadHljs() {
         if (this._hljsPromise) return this._hljsPromise;
         this._hljsPromise = new Promise((resolve) => {
-            // CSS themes (inject once, lazy)
             if (!document.getElementById('hljs-theme-dark')) {
                 const dark = Object.assign(document.createElement('link'), {
                     rel: 'stylesheet', id: 'hljs-theme-dark',
@@ -1166,29 +1173,69 @@ const FileViewer = {
                 light.disabled = true;
                 document.head.appendChild(light);
             }
-            // JS bundle
             if (window.hljs) { resolve(); return; }
-            const script = document.createElement('script');
-            script.src = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js';
-            script.onload = resolve;
-            script.onerror = resolve;   // graceful: no highlight if CDN fails
-            document.head.appendChild(script);
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js';
+            s.onload = resolve; s.onerror = resolve;
+            document.head.appendChild(s);
         });
         return this._hljsPromise;
     },
+
+    _loadMarked() {
+        if (this._markedPromise) return this._markedPromise;
+        this._markedPromise = new Promise((resolve) => {
+            if (window.marked) { resolve(); return; }
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.6/marked.min.js';
+            s.onload = resolve; s.onerror = resolve;
+            document.head.appendChild(s);
+        });
+        return this._markedPromise;
+    },
+
+    _loadMermaid() {
+        if (this._mermaidPromise) return this._mermaidPromise;
+        this._mermaidPromise = new Promise((resolve) => {
+            if (window.mermaid) { resolve(); return; }
+            const s = document.createElement('script');
+            s.src = 'https://cdnjs.cloudflare.com/ajax/libs/mermaid/10.6.1/mermaid.min.js';
+            s.onload = () => {
+                window.mermaid?.initialize({ startOnLoad: false, theme: 'neutral' });
+                resolve();
+            };
+            s.onerror = resolve;
+            document.head.appendChild(s);
+        });
+        return this._mermaidPromise;
+    },
+
+    // ------------------------------------------------------------------
+    // Public API
+    // ------------------------------------------------------------------
 
     open(path, name) {
         const overlay = document.getElementById('file-viewer-overlay');
         if (!overlay) return;
 
-        // Reset state
-        document.getElementById('file-viewer-loading').style.display = 'flex';
-        document.getElementById('file-viewer-error').style.display = 'none';
-        document.getElementById('file-viewer-content').style.display = 'none';
+        this._previewMode = false;
+        this._currentConfig = null;
+
+        const fvShow = (id) => document.getElementById(id)?.classList.remove('fv-hidden');
+        const fvHide = (id) => document.getElementById(id)?.classList.add('fv-hidden');
+
+        fvShow('file-viewer-loading');
+        fvHide('file-viewer-error');
+        fvHide('file-viewer-content');
+        fvHide('file-viewer-preview');
+        document.getElementById('file-viewer-preview')?.replaceChildren();
         document.getElementById('file-viewer-name').textContent = name || path.split('/').pop();
         document.getElementById('file-viewer-path').textContent = path;
         document.getElementById('file-viewer-meta').textContent = '';
         document.getElementById('file-viewer-icon').innerHTML = Explorer._svgFile(name || path);
+
+        const previewBtn = document.getElementById('file-viewer-preview-btn');
+        if (previewBtn) { fvHide('file-viewer-preview-btn'); previewBtn.textContent = 'Preview'; }
 
         overlay.style.display = 'flex';
         document.body.style.overflow = 'hidden';
@@ -1203,18 +1250,17 @@ const FileViewer = {
         document.body.style.overflow = '';
     },
 
+    // ------------------------------------------------------------------
+    // Fetch & dispatch
+    // ------------------------------------------------------------------
+
     async _fetch(path) {
         try {
             const ws = window.Explorer?.workspacePath || '';
             const res = await fetch('/api/file-content?path=' + encodeURIComponent(path)
                 + '&workspace=' + encodeURIComponent(ws));
             const data = await res.json();
-
-            if (!res.ok) {
-                this._showError(data.detail || 'Error al leer el archivo');
-                return;
-            }
-
+            if (!res.ok) { this._showError(data.detail || 'Error al leer el archivo'); return; }
             await this._render(data);
         } catch (err) {
             this._showError('Error de red: ' + String(err));
@@ -1223,29 +1269,48 @@ const FileViewer = {
 
     async _render(data) {
         this._currentContent = data.content;
+        const config = (window.FileTypeRegistry?.resolve(data.name)) || { type: 'code', lang: null, label: data.ext || 'txt', canPreview: false };
+        this._currentConfig = config;
 
-        // Meta info
         const kb = data.size < 1024 ? data.size + ' B' : (data.size / 1024).toFixed(1) + ' KB';
         document.getElementById('file-viewer-meta').textContent =
-            `${data.lines} líneas · ${kb} · .${data.ext || 'txt'}`;
+            `${data.lines} líneas · ${kb} · ${config.label || ('.' + (data.ext || 'txt'))}`;
 
-        // Build line numbers
+        // Show/hide preview toggle button
+        const previewBtn = document.getElementById('file-viewer-preview-btn');
+        if (previewBtn) {
+            previewBtn.classList.toggle('fv-hidden', !config.canPreview);
+        }
+
+        if (config.type === 'markdown') {
+            // Highlight code in background (keeps colors when switching to edit mode),
+            // but don't show the code panel — go straight to preview.
+            await this._renderCode(data.content, data.lines, 'markdown', { showContent: false });
+            await this.togglePreview();
+        } else if (config.type === 'json') {
+            await this._renderJson(data.content, data.lines);
+        } else if (config.type === 'xml') {
+            await this._renderXml(data.content);
+        } else {
+            await this._renderCode(data.content, data.lines, config.lang);
+        }
+    },
+
+    // ------------------------------------------------------------------
+    // Renderers
+    // ------------------------------------------------------------------
+
+    async _renderCode(content, lines, lang, { showContent = true } = {}) {
         const linesEl = document.getElementById('file-viewer-lines');
-        linesEl.innerHTML = Array.from({ length: data.lines }, (_, i) =>
-            `<span>${i + 1}</span>`
-        ).join('');
+        linesEl.innerHTML = Array.from({ length: lines }, (_, i) => `<span>${i + 1}</span>`).join('');
 
-        // Syntax highlighting — lazy-load hljs on first open
         const codeEl = document.getElementById('file-viewer-code');
-        const escaped = data.content
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-        codeEl.innerHTML = escaped;
+        codeEl.innerHTML = content.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        // hljs marks processed elements with data-highlighted; clear it so re-opens re-highlight
+        codeEl.removeAttribute('data-highlighted');
 
         await this._loadHljs();
 
-        const lang = this._langFromExt(data.ext);
         if (window.hljs && lang) {
             codeEl.className = 'language-' + lang;
             try { hljs.highlightElement(codeEl); } catch (_) {}
@@ -1254,18 +1319,102 @@ const FileViewer = {
             try { hljs.highlightElement(codeEl); } catch (_) {}
         }
 
-        // Sync theme
         this._syncTheme();
-
-        document.getElementById('file-viewer-loading').style.display = 'none';
-        document.getElementById('file-viewer-content').style.display = 'flex';
+        document.getElementById('file-viewer-loading').classList.add('fv-hidden');
+        if (showContent) {
+            document.getElementById('file-viewer-content').classList.remove('fv-hidden');
+        }
     },
 
+    async _renderJson(content, lines) {
+        let formatted = content;
+        try { formatted = JSON.stringify(JSON.parse(content), null, 2); } catch (_) {}
+        const fmtLines = formatted.split('\n').length;
+        await this._renderCode(formatted, fmtLines, 'json');
+    },
+
+    async _renderXml(content) {
+        const formatted = this._prettyXml(content);
+        const lines = formatted.split('\n').length;
+        await this._renderCode(formatted, lines, 'xml');
+    },
+
+    _prettyXml(xml) {
+        try {
+            const PAD = '    ';
+            let out = '', depth = 0;
+            xml.replace(/>\s*</g, '>\n<').split('\n').forEach(node => {
+                node = node.trim();
+                if (!node) return;
+                if (/^<\/\w/.test(node)) depth = Math.max(0, depth - 1);
+                out += PAD.repeat(depth) + node + '\n';
+                if (/^<\w[^>]*[^/]>/.test(node) && !/<.*\/>/.test(node) && !/^<[?!]/.test(node)) depth++;
+            });
+            return out.trim();
+        } catch (_) { return xml; }
+    },
+
+    // ------------------------------------------------------------------
+    // Markdown preview toggle
+    // ------------------------------------------------------------------
+
+    async togglePreview() {
+        if (!this._currentConfig?.canPreview) return;
+
+        const previewEl = document.getElementById('file-viewer-preview');
+        const contentEl = document.getElementById('file-viewer-content');
+        const previewBtn = document.getElementById('file-viewer-preview-btn');
+
+        if (this._previewMode) {
+            // Switch back to code view
+            previewEl.classList.add('fv-hidden');
+            contentEl.classList.remove('fv-hidden');
+            this._previewMode = false;
+            if (previewBtn) previewBtn.textContent = 'Preview';
+            return;
+        }
+
+        // Switch to preview
+        contentEl.classList.add('fv-hidden');
+        previewEl.classList.remove('fv-hidden');
+        this._previewMode = true;
+        if (previewBtn) previewBtn.textContent = 'Código';
+
+        await this._loadMarked();
+        await this._loadMermaid();
+
+        let html = '';
+        if (window.marked) {
+            html = marked.parse(this._currentContent);
+        } else {
+            // fallback: wrap in pre if marked didn't load
+            html = '<pre>' + this._currentContent.replace(/</g, '&lt;') + '</pre>';
+        }
+        previewEl.innerHTML = `<div class="md-preview-body">${html}</div>`;
+
+        // Render mermaid blocks
+        if (window.mermaid) {
+            previewEl.querySelectorAll('code.language-mermaid').forEach((el, i) => {
+                const src = el.textContent;
+                const div = document.createElement('div');
+                div.className = 'mermaid';
+                div.id = `fv-mermaid-${Date.now()}-${i}`;
+                div.textContent = src;
+                el.parentElement.replaceWith(div);
+            });
+            try { await mermaid.run({ nodes: previewEl.querySelectorAll('.mermaid') }); } catch (_) {}
+        }
+    },
+
+    // ------------------------------------------------------------------
+    // Helpers
+    // ------------------------------------------------------------------
+
     _showError(msg) {
-        document.getElementById('file-viewer-loading').style.display = 'none';
+        document.getElementById('file-viewer-loading').classList.add('fv-hidden');
         const el = document.getElementById('file-viewer-error');
         el.textContent = msg;
-        el.style.display = 'flex';
+        el.classList.remove('fv-hidden');
     },
 
     _syncTheme() {
@@ -1274,19 +1423,6 @@ const FileViewer = {
         const light = document.getElementById('hljs-theme-light');
         if (dark) dark.disabled = !isDark;
         if (light) light.disabled = isDark;
-    },
-
-    _langFromExt(ext) {
-        return {
-            py: 'python', js: 'javascript', ts: 'typescript', jsx: 'javascript',
-            tsx: 'typescript', html: 'html', css: 'css', json: 'json',
-            md: 'markdown', sh: 'bash', bash: 'bash', yml: 'yaml',
-            yaml: 'yaml', toml: 'toml', rs: 'rust', go: 'go',
-            java: 'java', c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp',
-            rb: 'ruby', php: 'php', sql: 'sql', xml: 'xml',
-            dockerfile: 'dockerfile', tf: 'hcl', lua: 'lua',
-            r: 'r', scala: 'scala', kt: 'kotlin', swift: 'swift',
-        }[ext] || null;
     },
 
     init() {
@@ -1304,6 +1440,9 @@ const FileViewer = {
                 Utils.copyToClipboard(this._currentContent);
                 Utils.showToast('Contenido copiado', 'success');
             }
+        });
+        document.getElementById('file-viewer-preview-btn')?.addEventListener('click', () => {
+            this.togglePreview();
         });
     },
 };
