@@ -107,6 +107,9 @@ class PersistenceDB:
                 for migration in (
                     "ALTER TABLE sessions ADD COLUMN max_agent_steps INTEGER NOT NULL DEFAULT 100",
                     "ALTER TABLE sessions ADD COLUMN agent_task_timeout INTEGER NOT NULL DEFAULT 300",
+                    "ALTER TABLE sessions ADD COLUMN title TEXT NOT NULL DEFAULT ''",
+                    "ALTER TABLE sessions ADD COLUMN system_prompt TEXT NOT NULL DEFAULT ''",
+                    "ALTER TABLE sessions ADD COLUMN active_skill TEXT",
                 ):
                     try:
                         conn.execute(migration)
@@ -140,8 +143,9 @@ class PersistenceDB:
                         (id, mode, model, temperature, workspace_root, current_cwd,
                          approval_level, max_agent_steps, agent_task_timeout,
                          context_summary, pending_approval, current_plan,
+                         title, system_prompt, active_skill,
                          created_at, updated_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                     ON CONFLICT(id) DO UPDATE SET
                         mode               = excluded.mode,
                         model              = excluded.model,
@@ -154,6 +158,9 @@ class PersistenceDB:
                         context_summary    = excluded.context_summary,
                         pending_approval   = excluded.pending_approval,
                         current_plan       = excluded.current_plan,
+                        title              = excluded.title,
+                        system_prompt      = excluded.system_prompt,
+                        active_skill       = excluded.active_skill,
                         updated_at         = excluded.updated_at
                     """,
                     (
@@ -177,6 +184,9 @@ class PersistenceDB:
                             if meta.get("current_plan")
                             else None
                         ),
+                        meta.get("title", ""),
+                        meta.get("system_prompt", ""),
+                        meta.get("active_skill"),
                         meta.get("created_at", now),
                         now,
                     ),
@@ -270,7 +280,8 @@ class PersistenceDB:
             with self._connect() as conn:
                 rows = conn.execute(
                     """
-                    SELECT s.id, s.mode, s.model, s.updated_at,
+                    SELECT s.id, s.mode, s.model, s.title,
+                           s.workspace_root, s.created_at, s.updated_at,
                            COUNT(m.id) AS message_count
                     FROM   sessions s
                     LEFT JOIN messages m ON m.session_id = s.id

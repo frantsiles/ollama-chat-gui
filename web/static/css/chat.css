@@ -349,8 +349,12 @@
    Input Area
    ============================================================================= */
 
+/* =============================================================================
+   Input Area — Warp V2 style
+   ============================================================================= */
+
 .input-area {
-    padding: var(--space-md) var(--space-lg);
+    padding: var(--space-sm) var(--space-lg) var(--space-md);
     background: var(--bg-primary);
     border-top: 1px solid var(--border-primary);
 }
@@ -358,17 +362,180 @@
 .input-container {
     max-width: var(--input-max-width);
     margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
 }
 
+/* ---- Top row ---- */
+.input-top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-sm);
+    padding: 0 2px;
+}
+
+.input-selectors {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.input-selector-divider {
+    width: 1px;
+    height: 14px;
+    background: var(--border-primary);
+    margin: 0 4px;
+    flex-shrink: 0;
+}
+
+/* Selector button (mode / skill) */
+.input-selector-btn {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+}
+
+.input-selector-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.input-selector-btn.active,
+.input-selector-btn[aria-expanded="true"] {
+    background: var(--bg-tertiary);
+    color: var(--text-primary);
+}
+
+.selector-chevron {
+    opacity: 0.5;
+    flex-shrink: 0;
+    transition: transform 0.15s;
+}
+
+.input-selector-btn[aria-expanded="true"] .selector-chevron {
+    transform: rotate(180deg);
+}
+
+/* Dropdown menu */
+.input-selector-wrap {
+    position: relative;
+}
+
+.input-selector-menu {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 0;
+    min-width: 150px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    padding: 4px;
+    z-index: 200;
+    animation: dropUp 0.12s ease;
+}
+
+.input-selector-menu.open {
+    display: block;
+}
+
+@keyframes dropUp {
+    from { opacity: 0; transform: translateY(4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.selector-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    padding: 6px 10px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-size: var(--text-sm);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    text-align: left;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.selector-menu-item:hover,
+.selector-menu-item.active {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.selector-menu-item.active {
+    color: var(--accent-primary);
+}
+
+.selector-menu-empty {
+    padding: 8px 10px;
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    white-space: nowrap;
+}
+
+/* Skill badge when active */
+.skill-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 1px 6px;
+    background: var(--accent-primary-bg);
+    color: var(--accent-primary);
+    border-radius: var(--radius-full);
+    font-size: 10px;
+    font-weight: 500;
+}
+
+/* "Skills" manage button (top-right) */
+.input-top-action {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+}
+
+.input-top-action:hover {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+}
+
+/* ---- Main input box ---- */
 .input-wrapper {
     display: flex;
-    align-items: flex-end;
-    gap: var(--space-sm);
-    padding: var(--space-sm);
+    flex-direction: column;
+    padding: var(--space-sm) var(--space-sm) 6px;
     background: var(--input-bg);
     border: 1px solid var(--input-border);
     border-radius: var(--radius-xl);
     transition: border-color var(--transition-fast);
+    gap: 6px;
 }
 
 .input-wrapper:focus-within {
@@ -376,10 +543,10 @@
 }
 
 .message-input {
-    flex: 1;
+    width: 100%;
     min-height: 24px;
     max-height: 200px;
-    padding: var(--space-sm);
+    padding: 0 var(--space-sm);
     background: transparent;
     border: none;
     color: var(--text-primary);
@@ -394,24 +561,94 @@
     color: var(--input-placeholder);
 }
 
-.input-actions {
+/* ---- Inline footer inside the box ---- */
+.input-inline-footer {
     display: flex;
     align-items: center;
-    gap: var(--space-xs);
+    justify-content: space-between;
+    padding: 0 var(--space-xs);
 }
 
+.input-footer-left,
+.input-footer-right {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+/* Small action buttons inside the footer */
+.input-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.input-action-btn:hover {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+}
+
+/* Compact model picker inside footer */
+.input-model-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    font-size: var(--text-xs);
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: background var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+    max-width: 160px;
+}
+
+.input-model-btn:hover,
+.input-model-btn[aria-expanded="true"] {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+}
+
+.input-model-btn span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 120px;
+}
+
+.input-model-menu {
+    left: auto;
+    right: 0;
+    max-height: 200px;
+    overflow-y: auto;
+    min-width: 180px;
+}
+
+/* Send button */
 .send-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 36px;
-    height: 36px;
+    width: 30px;
+    height: 30px;
     background: var(--accent-primary);
     border: none;
     border-radius: var(--radius-full);
     color: white;
     cursor: pointer;
     transition: all var(--transition-fast);
+    flex-shrink: 0;
 }
 
 .send-btn:hover:not(:disabled) {
@@ -423,6 +660,18 @@
     background: var(--bg-tertiary);
     color: var(--text-tertiary);
     cursor: not-allowed;
+}
+
+/* Attachments inside the box (shown above textarea) */
+.attachments-preview {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-xs);
+    padding: 0 var(--space-xs);
+}
+
+.attachments-preview:empty {
+    display: none;
 }
 
 /* =============================================================================
@@ -572,20 +821,255 @@
 }
 
 /* =============================================================================
-   Input Footer
+   GFM Tables (rendered by Utils.parseMarkdown)
    ============================================================================= */
 
-.input-footer {
-    display: flex;
-    justify-content: space-between;
-    margin-top: var(--space-sm);
-    font-size: var(--text-xs);
-    color: var(--text-tertiary);
+.message-body table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: var(--space-sm) 0;
+    font-size: var(--text-sm);
 }
 
-.mode-indicator strong,
-.model-indicator strong {
-    color: var(--text-secondary);
+.message-body th,
+.message-body td {
+    padding: 6px 12px;
+    border: 1px solid var(--border-primary);
+    text-align: left;
+}
+
+.message-body th {
+    background: var(--bg-tertiary);
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.message-body tr:hover td {
+    background: var(--bg-hover);
+}
+
+/* =============================================================================
+   Skills Management Modal
+   ============================================================================= */
+
+.skills-modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 500;
+    animation: fadeIn 0.15s ease;
+}
+
+.skills-modal {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-primary);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-xl);
+    width: min(640px, 90vw);
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.skills-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-md) var(--space-lg);
+    border-bottom: 1px solid var(--border-primary);
+}
+
+.skills-modal-header h3 {
+    font-size: var(--text-lg);
+    font-weight: 600;
+    margin: 0;
+}
+
+.skills-modal-close {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-md);
+    color: var(--text-tertiary);
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.skills-modal-close:hover {
+    background: var(--bg-hover);
+    color: var(--text-primary);
+}
+
+.skills-modal-body {
+    display: flex;
+    gap: 0;
+    overflow: hidden;
+    flex: 1;
+}
+
+/* Left column: skill list */
+.skills-list {
+    flex: 0 0 200px;
+    border-right: 1px solid var(--border-primary);
+    overflow-y: auto;
+    padding: var(--space-sm);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.skills-empty {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    padding: var(--space-sm);
+    text-align: center;
+}
+
+.skill-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-xs);
+    padding: 6px 8px;
+    border-radius: var(--radius-md);
+    transition: background var(--transition-fast);
+}
+
+.skill-item:hover {
+    background: var(--bg-hover);
+}
+
+.skill-item-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+}
+
+.skill-item-name {
+    font-size: var(--text-sm);
+    font-weight: 500;
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.skill-item-desc {
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.skill-item-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.skill-item:hover .skill-item-actions {
+    opacity: 1;
+}
+
+.skill-action-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    color: var(--text-tertiary);
+    transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.skill-edit-btn:hover {
+    background: var(--bg-tertiary);
+    color: var(--accent-primary);
+}
+
+.skill-delete-btn:hover {
+    background: var(--accent-danger-bg);
+    color: var(--accent-danger);
+}
+
+/* Right column: form */
+.skills-form-section {
+    flex: 1;
+    padding: var(--space-lg);
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+}
+
+.skills-form-section h4 {
+    font-size: var(--text-base);
+    font-weight: 600;
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.skills-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+}
+
+.skills-input {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: var(--text-sm);
+    transition: border-color var(--transition-fast);
+    outline: none;
+}
+
+.skills-input:focus {
+    border-color: var(--input-focus-border);
+}
+
+.skills-textarea {
+    padding: var(--space-sm) var(--space-md);
+    background: var(--input-bg);
+    border: 1px solid var(--input-border);
+    border-radius: var(--radius-md);
+    color: var(--text-primary);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.6;
+    resize: vertical;
+    outline: none;
+    min-height: 120px;
+    transition: border-color var(--transition-fast);
+}
+
+.skills-textarea:focus {
+    border-color: var(--input-focus-border);
+}
+
+.skills-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--space-sm);
 }
 
 /* =============================================================================

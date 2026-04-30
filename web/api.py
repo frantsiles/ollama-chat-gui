@@ -18,10 +18,12 @@ from llm.client import OllamaClient, OllamaClientError
 from web.state import SessionManager
 from web.api_rag import router as rag_router
 from web.api_memory import router as memory_router
+from web.api_skills import router as skills_router
 
 router = APIRouter(prefix="/api", tags=["api"])
 router.include_router(rag_router)
 router.include_router(memory_router)
+router.include_router(skills_router)
 
 
 # =============================================================================
@@ -38,6 +40,7 @@ class ConfigUpdate(BaseModel):
     max_agent_steps: Optional[int] = None
     agent_task_timeout: Optional[int] = None
     system_prompt: Optional[str] = None
+    active_skill: Optional[str] = None  # "" para desactivar
 
 
 class SessionCreate(BaseModel):
@@ -61,15 +64,20 @@ async def get_models() -> Dict[str, Any]:
         client = OllamaClient(base_url=OLLAMA_BASE_URL)
         models = client.list_models()
         
-        # Obtener capacidades de cada modelo
+        # Obtener capacidades y clasificar modelos (locales primero)
         model_list = []
         for model in models:
             caps = client.get_model_capabilities(model)
+            is_cloud = ":cloud" in model.lower() or model.lower().endswith("-cloud")
             model_list.append({
                 "name": model,
                 "capabilities": list(caps),
+                "cloud": is_cloud,
             })
-        
+
+        # Modelos locales primero, cloud al final
+        model_list.sort(key=lambda m: (1 if m["cloud"] else 0, m["name"]))
+
         return {"models": model_list}
     except OllamaClientError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -194,6 +202,8 @@ async def update_config(session_id: str, data: ConfigUpdate) -> Dict[str, Any]:
         session.agent_task_timeout = max(30, min(3600, data.agent_task_timeout))
     if data.system_prompt is not None:
         session.system_prompt = data.system_prompt[:4000]  # razonable upper bound
+    if data.active_skill is not None:
+        session.active_skill = data.active_skill or None  # "" → None
 
     return {"config": session.to_dict()}
 
@@ -223,6 +233,151 @@ async def handle_approval(session_id: str, action: ApprovalAction) -> Dict[str, 
     
     # La aprobación se maneja via WebSocket para continuar el flujo
     return {"status": "pending", "message": "Use WebSocket to handle approval"}
+
+
+# =============================================================================
+# Conversations History Endpoints
+# =============================================================================
+
+class TitleUpdate(BaseModel):
+    title: str
+
+
+@router.get("/conversations")
+async def list_conversations() -> Dict[str, Any]:
+    """Lista todas las conversaciones guardadas (más recientes primero)."""
+    sessions = SessionManager.list_sessions()
+    return {"conversations": sessions}
+
+
+@router.delete("/conversations")
+async def delete_all_conversations() -> Dict[str, Any]:
+    """Elimina TODAS las conversaciones del historial."""
+    sessions = SessionManager.list_sessions()
+    deleted = 0
+    for s in sessions:
+        if SessionManager.delete(s["id"]):
+            deleted += 1
+    return {"status": "cleared", "deleted": deleted}
+
+
+@router.delete("/conversations/{session_id}")
+async def delete_conversation(session_id: str) -> Dict[str, str]:
+    """Elimina una conversación del historial."""
+    if SessionManager.delete(session_id):
+        return {"status": "deleted"}
+    raise HTTPException(status_code=404, detail="Conversation not found")
+
+
+@router.patch("/conversations/{session_id}/title")
+async def update_conversation_title(session_id: str, data: TitleUpdate) -> Dict[str, Any]:
+    """Actualiza el título de una conversación."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    session.title = data.title.strip()[:120]
+    SessionManager.save(session)
+    return {"session_id": session_id, "title": session.title}
+
+
+@router.get("/conversations/{session_id}/messages")
+async def get_conversation_messages(session_id: str) -> Dict[str, Any]:
+    """Obtiene los mensajes de una conversación del historial."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {
+        "session_id": session_id,
+        "title": session.title,
+        "model": session.model,
+        "mode": session.mode,
+        "created_at": session.created_at.isoformat(),
+        "messages": session.get_messages_for_display(),
+    }
+
+
+@router.get("/conversations/{session_id}/export")
+async def export_conversation(session_id: str) -> Dict[str, Any]:
+    """Exporta una conversación completa como JSON serializable."""
+    session = SessionManager.get(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    return {
+        "version": 1,
+        "session_id": session_id,
+        "title": session.title,
+        "model": session.model,
+        "mode": session.mode,
+        "temperature": session.temperature,
+        "created_at": session.created_at.isoformat(),
+        "messages": session.get_messages_for_display(),
+    }
+
+
+@router.get("/conversations/export-all")
+async def export_all_conversations() -> Dict[str, Any]:
+    """Exporta todas las conversaciones."""
+    sessions_meta = SessionManager.list_sessions()
+    conversations = []
+    for meta in sessions_meta:
+        session = SessionManager.get(meta["id"])
+        if not session:
+            continue
+        conversations.append({
+            "version": 1,
+            "session_id": session.id,
+            "title": session.title,
+            "model": session.model,
+            "mode": session.mode,
+            "temperature": session.temperature,
+            "created_at": session.created_at.isoformat(),
+            "messages": session.get_messages_for_display(),
+        })
+    return {"version": 1, "conversations": conversations}
+
+
+@router.post("/conversations/import")
+async def import_conversations(request: Request) -> Dict[str, Any]:
+    """Importa conversación(es) desde JSON exportado previamente."""
+    from datetime import datetime as _dt
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="JSON inválido")
+
+    # Acepta tanto un objeto único como { conversations: [...] }
+    items = payload.get("conversations") if "conversations" in payload else [payload]
+    if not isinstance(items, list):
+        raise HTTPException(status_code=400, detail="Formato no reconocido")
+
+    imported = 0
+    for item in items:
+        if not isinstance(item, dict) or "messages" not in item:
+            continue
+        # Generar nuevo ID para evitar colisiones
+        from uuid import uuid4
+        new_id = str(uuid4())
+        session = SessionManager.get_or_create(new_id)
+        session.title = item.get("title", "")[:120]
+        session.model = item.get("model", "")
+        session.mode = item.get("mode", "agent")
+        session.temperature = float(item.get("temperature", 0.7))
+        raw_ts = item.get("created_at")
+        if raw_ts:
+            try:
+                session.created_at = _dt.fromisoformat(raw_ts)
+            except ValueError:
+                pass
+        for msg in item.get("messages", []):
+            if msg.get("role") in ("user", "assistant") and msg.get("content"):
+                session.add_message(
+                    msg["role"], msg["content"],
+                    attachments=msg.get("attachments", []),
+                )
+        SessionManager.save(session)
+        imported += 1
+
+    return {"status": "imported", "count": imported}
 
 
 # =============================================================================

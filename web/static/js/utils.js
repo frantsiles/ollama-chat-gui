@@ -34,54 +34,122 @@ const Utils = {
     },
 
     /**
-     * Simple markdown parser
+     * Markdown parser with GFM table support (inspired by Warp's gfm_table.rs)
      */
     parseMarkdown(text) {
         if (!text) return '';
-        
-        let html = Utils.escapeHtml(text);
-        
-        // Code blocks (```)
-        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-            return `<pre><code class="language-${lang}">${code.trim()}</code></pre>`;
+
+        // --- Phase 1: extract fenced code blocks to protect them ---
+        const codeBlocks = [];
+        let src = text.replace(/```([\w.-]*)\r?\n([\s\S]*?)```/g, (_, lang, code) => {
+            const idx = codeBlocks.length;
+            codeBlocks.push({ lang: lang || '', code });
+            return `\x02CODE${idx}\x03`;
         });
-        
-        // Inline code (`)
-        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
-        
-        // Bold (**text**)
-        html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-        
-        // Italic (*text*)
-        html = html.replace(/\*([^*]+)\*/g, '<em>$1</em>');
-        
-        // Links [text](url)
-        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
-        
-        // Headers (# ## ###)
-        html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-        html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-        html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
-        
-        // Unordered lists
-        html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
-        html = html.replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>');
-        
-        // Ordered lists
-        html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
-        
-        // Blockquotes
-        html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
-        
-        // Line breaks
-        html = html.replace(/\n\n/g, '</p><p>');
-        html = html.replace(/\n/g, '<br>');
-        
-        // Wrap in paragraph
-        if (!html.startsWith('<')) {
-            html = `<p>${html}</p>`;
+
+        // --- Phase 2: extract inline code ---
+        const inlineCodes = [];
+        src = src.replace(/`([^`\n]+)`/g, (_, code) => {
+            const idx = inlineCodes.length;
+            inlineCodes.push(Utils.escapeHtml(code));
+            return `\x02INLINE${idx}\x03`;
+        });
+
+        // --- Phase 3: escape HTML on the rest ---
+        src = Utils.escapeHtml(src);
+
+        // --- Phase 4: line-by-line pass (headers, tables, lists, hr, blockquote) ---
+        const lines = src.split('\n');
+        const out = [];
+        let listType = null;   // 'ul' | 'ol' | null
+
+        const flushList = () => {
+            if (listType) { out.push(`</${listType}>`); listType = null; }
+        };
+
+        let i = 0;
+        while (i < lines.length) {
+            const line = lines[i];
+
+            // Headings
+            let m;
+            if ((m = line.match(/^#{1,6} (.+)$/))) {
+                const level = line.match(/^(#+)/)[1].length;
+                flushList();
+                out.push(`<h${level}>${m[1]}</h${level}>`);
+                i++; continue;
+            }
+
+            // Horizontal rule
+            if (/^(\*{3,}|-{3,}|_{3,})$/.test(line.trim())) {
+                flushList(); out.push('<hr>'); i++; continue;
+            }
+
+            // Blockquote
+            if (line.startsWith('&gt;')) {
+                flushList();
+                out.push(`<blockquote>${line.slice(4).trim()}</blockquote>`);
+                i++; continue;
+            }
+
+            // GFM table: header row followed by separator row
+            if (line.includes('|') && i + 1 < lines.length && _isGfmSeparator(lines[i + 1])) {
+                flushList();
+                const tableLines = [line, lines[i + 1]];
+                i += 2;
+                while (i < lines.length && lines[i].includes('|')) {
+                    tableLines.push(lines[i++]);
+                }
+                out.push(_renderGfmTable(tableLines));
+                continue;
+            }
+
+            // Unordered list
+            if ((m = line.match(/^(\s*)[-*+] (.+)$/))) {
+                if (listType !== 'ul') { flushList(); out.push('<ul>'); listType = 'ul'; }
+                out.push(`<li>${m[2]}</li>`);
+                i++; continue;
+            }
+
+            // Ordered list
+            if ((m = line.match(/^\d+\. (.+)$/))) {
+                if (listType !== 'ol') { flushList(); out.push('<ol>'); listType = 'ol'; }
+                out.push(`<li>${m[1]}</li>`);
+                i++; continue;
+            }
+
+            flushList();
+            out.push(line);
+            i++;
         }
-        
+        flushList();
+
+        // --- Phase 5: inline formatting ---
+        let html = out.join('\n');
+        html = html.replace(/\*\*\*([^*\n]+)\*\*\*/g, '<strong><em>$1</em></strong>');
+        html = html.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*([^*\n]+)\*/g, '<em>$1</em>');
+        html = html.replace(/~~([^~\n]+)~~/g, '<del>$1</del>');
+        html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+
+        // Double newlines → paragraph breaks; single newlines → <br>
+        html = html.replace(/\n\n+/g, '</p><p>');
+        html = html.replace(/\n/g, '<br>');
+        if (!html.startsWith('<')) html = `<p>${html}</p>`;
+
+        // --- Phase 6: restore inline code ---
+        inlineCodes.forEach((code, idx) => {
+            html = html.split(`\x02INLINE${idx}\x03`).join(`<code>${code}</code>`);
+        });
+
+        // --- Phase 7: restore fenced code blocks ---
+        codeBlocks.forEach(({ lang, code }, idx) => {
+            const esc = Utils.escapeHtml(code.replace(/\n$/, ''));
+            html = html.split(`\x02CODE${idx}\x03`).join(
+                `<pre><code class="language-${lang}">${esc}</code></pre>`
+            );
+        });
+
         return html;
     },
 
@@ -283,3 +351,51 @@ const Utils = {
 
 // Make available globally
 window.Utils = Utils;
+
+// =============================================================================
+// GFM Table helpers (used by Utils.parseMarkdown)
+// Ported from Warp's crates/ai/src/gfm_table.rs
+// =============================================================================
+
+function _isGfmSeparator(line) {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.includes('|')) return false;
+    let hasCell = false;
+    for (const cell of trimmed.split('|').map(c => c.trim())) {
+        if (!cell) continue;
+        const dashes = cell.replace(/^:/, '').replace(/:$/, '');
+        if (!dashes || !/^-+$/.test(dashes)) return false;
+        hasCell = true;
+    }
+    return hasCell;
+}
+
+function _parseTableRow(line) {
+    return line.trim().replace(/^\|/, '').replace(/\|$/, '').split('|').map(c => c.trim());
+}
+
+function _colAlign(cell) {
+    const c = cell.trim();
+    if (c.startsWith(':') && c.endsWith(':')) return 'center';
+    if (c.endsWith(':')) return 'right';
+    return 'left';
+}
+
+function _renderGfmTable(lines) {
+    const headers = _parseTableRow(lines[0]);
+    const aligns = _parseTableRow(lines[1]).map(_colAlign);
+    const rows = lines.slice(2).map(_parseTableRow);
+
+    let th = headers.map((h, i) =>
+        `<th style="text-align:${aligns[i] || 'left'}">${h}</th>`
+    ).join('');
+
+    let tb = rows.map(row => {
+        const tds = headers.map((_, i) =>
+            `<td style="text-align:${aligns[i] || 'left'}">${row[i] ?? ''}</td>`
+        ).join('');
+        return `<tr>${tds}</tr>`;
+    }).join('');
+
+    return `<table><thead><tr>${th}</tr></thead><tbody>${tb}</tbody></table>`;
+}

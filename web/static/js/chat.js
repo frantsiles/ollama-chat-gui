@@ -158,6 +158,16 @@ const Chat = {
                     this.renderToolCall(result);
                 });
             }
+
+            // Notificar al panel de historial para actualizar la entrada
+            if (window.History && wsManager?.sessionId) {
+                History.onSessionSaved({
+                    id: wsManager.sessionId,
+                    message_count: data.message_count,
+                    model: App.state.model,
+                    mode: App.state.mode,
+                });
+            }
         });
 
         wsManager.on('stream_start', () => {
@@ -861,12 +871,47 @@ const Chat = {
     },
 
     /**
+     * Restore messages from a historical session (read-only view).
+     */
+    restoreMessages(messages, meta = {}) {
+        // Clear current display + any previous history banner
+        this.messagesEl.querySelectorAll('.message, .history-view-banner').forEach(el => el.remove());
+        this.hideWelcome();
+
+        if (!messages || messages.length === 0) {
+            this.showWelcome();
+            return;
+        }
+
+        messages.forEach(msg => this.renderMessage(msg));
+        this.scrollToBottom();
+
+        // Optionally show banner indicating this is a historical view
+        const banner = document.createElement('div');
+        banner.className = 'history-view-banner';
+        banner.innerHTML = `
+            <span>Vista del historial${meta.title ? ': <em>' + Utils.escapeHtml(meta.title) + '</em>' : ''}</span>
+            <button id="history-resume-btn">Continuar esta conversación</button>
+        `;
+        this.messagesEl.insertBefore(banner, this.messagesEl.firstChild);
+
+        document.getElementById('history-resume-btn')?.addEventListener('click', async () => {
+            banner.remove();
+            // Reconnect using the historical session id
+            if (meta.sessionId && window.wsManager) {
+                wsManager.disconnect();
+                await wsManager.connect(meta.sessionId);
+                if (window.Sidebar) Sidebar.onConnected();
+            }
+        });
+    },
+
+    /**
      * Clear chat
      */
     clearChat() {
-        // Clear messages except welcome
-        const messages = this.messagesEl.querySelectorAll('.message');
-        messages.forEach(msg => msg.remove());
+        // Clear messages and any history banner
+        this.messagesEl.querySelectorAll('.message, .history-view-banner').forEach(el => el.remove());
         
         // Show welcome
         this.showWelcome();

@@ -182,20 +182,22 @@ const Sidebar = {
                 data.models.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model.name;
-                    option.textContent = model.name;
+                    let label = model.name;
+                    if (model.cloud) label += ' ☁';
+                    if (model.capabilities && model.capabilities.includes('tools')) label += ' ⚡';
+                    option.textContent = label;
+                    if (model.cloud) option.title = 'Modelo cloud — requiere autenticación en ollama.com';
                     App.state.modelCapabilities[model.name] = model.capabilities || [];
-
-                    // Show capabilities hint
-                    if (model.capabilities && model.capabilities.includes('tools')) {
-                        option.textContent += ' ⚡';
-                        option.title = 'Soporta function calling nativo';
-                    }
                     this.modelSelect.appendChild(option);
                 });
 
+                // Prefer saved model, fall back to first LOCAL model
                 const savedModel = Utils.storage.get('selectedModel');
-                if (savedModel && data.models.find(m => m.name === savedModel)) {
+                const localModels = data.models.filter(m => !m.cloud);
+                if (savedModel && data.models.find(m => m.name === savedModel && !m.cloud)) {
                     this.modelSelect.value = savedModel;
+                } else if (localModels.length > 0) {
+                    this.modelSelect.value = localModels[0].name;
                 } else {
                     this.modelSelect.value = data.models[0].name;
                 }
@@ -203,6 +205,10 @@ const Sidebar = {
                 this.updateModelIndicator(this.modelSelect.value);
                 Utils.storage.set('selectedModel', this.modelSelect.value);
                 App.state.model = this.modelSelect.value;
+                // Populate compact model picker in input footer
+                if (window.Skills && typeof Skills.populateModelMenu === 'function') {
+                    Skills.populateModelMenu(data.models);
+                }
 
                 if (wsManager && wsManager.sessionId) {
                     this.updateConfig({ model: this.modelSelect.value });
@@ -294,6 +300,10 @@ const Sidebar = {
     updateModelIndicator(model) {
         const el = document.getElementById('model-indicator');
         if (el) el.innerHTML = `Modelo: <strong>${model || '-'}</strong>`;
+        // Sync compact model picker in input footer
+        if (window.Skills && typeof Skills.updateModelLabel === 'function') {
+            Skills.updateModelLabel(model);
+        }
         if (model) this._fetchContextSize(model);
     },
 

@@ -51,6 +51,8 @@ const App = {
         this.safeInitModule('Sidebar', window.Sidebar);
         this.safeInitModule('Plan', window.Plan);
         this.safeInitModule('Modes', window.Modes);
+        this.safeInitModule('Skills', window.Skills);
+        this.safeInitModule('History', window.History);
         this.safeInitModule('Chat', window.Chat);
         this.safeInitModule('MCP', window.MCP);
         Utils.log('APP', 'Module initialization finished');
@@ -69,6 +71,10 @@ const App = {
             // Actualizar estado del botón enviar
             if (window.Chat && typeof Chat.updateSendButton === 'function') {
                 Chat.updateSendButton();
+            }
+            // Cargar historial de conversaciones
+            if (window.History && typeof History.load === 'function') {
+                History.load();
             }
         } catch (error) {
             Utils.log('APP', '❌ Connection failed:', error);

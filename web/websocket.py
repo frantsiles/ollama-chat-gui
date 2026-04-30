@@ -176,7 +176,18 @@ async def handle_chat_message(
         agent.approval_manager.set_level(session.approval_level)
         agent._context_summary = session.context_summary
         agent._max_agent_steps = session.max_agent_steps
-        agent._custom_instructions = session.system_prompt
+        # Inyectar skill activo al comienzo de las instrucciones
+        if session.active_skill:
+            from tools.skills_manager import SkillsManager
+            _skill_prompt = SkillsManager(Path(session.workspace_root)).get_skill_prompt(session.active_skill)
+            if _skill_prompt:
+                agent._custom_instructions = _skill_prompt + (
+                    "\n\n" + session.system_prompt if session.system_prompt else ""
+                )
+            else:
+                agent._custom_instructions = session.system_prompt
+        else:
+            agent._custom_instructions = session.system_prompt
 
         # --- Memoria a largo plazo ---
         memory_store = None
@@ -413,6 +424,9 @@ async def handle_chat_message(
                 "message": f"Error interno: {str(e)}",
             })
         finally:
+            # Generar título automático la primera vez que hay mensajes
+            if not session.title:
+                session.title = session.generate_title()
             # Persistir sesión tras cada request (incluso si hubo error)
             SessionManager.save(session)
 

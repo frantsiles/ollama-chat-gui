@@ -39,12 +39,17 @@ class Session:
     agent_trace: List[str] = field(default_factory=list)
     # Running lightweight summary of conversation history (for context windowing)
     context_summary: str = ""
+    # Skill activo — su contenido se inyecta en el system prompt del agente
+    active_skill: Optional[str] = None
+    # Título generado automáticamente del primer mensaje de usuario
+    title: str = ""
     created_at: datetime = field(default_factory=datetime.now)
     
     def to_dict(self) -> Dict[str, Any]:
         """Serializa la sesión."""
         return {
             "id": self.id,
+            "title": self.title,
             "mode": self.mode,
             "model": self.model,
             "temperature": self.temperature,
@@ -54,12 +59,25 @@ class Session:
             "max_agent_steps": self.max_agent_steps,
             "agent_task_timeout": self.agent_task_timeout,
             "system_prompt": self.system_prompt,
+            "active_skill": self.active_skill,
             "pending_approval": self.pending_approval,
             "current_plan": self.current_plan,
             "agent_trace": self.agent_trace,
             "message_count": len(self.conversation.messages),
             "has_context_summary": bool(self.context_summary),
+            "created_at": self.created_at.isoformat(),
         }
+
+    def generate_title(self) -> str:
+        """Genera un título a partir del primer mensaje de usuario (máx 60 chars)."""
+        for msg in self.conversation.messages:
+            if msg.role == MessageRole.USER and msg.content.strip():
+                text = msg.content.strip()
+                # Quitar líneas de adjuntos
+                lines = [l for l in text.splitlines() if not l.startswith("---")]
+                text = " ".join(lines).strip()
+                return text[:57] + "..." if len(text) > 60 else text
+        return ""
     
     def add_message(self, role: str, content: str, **kwargs) -> Message:
         """Agrega un mensaje a la conversación."""
@@ -152,6 +170,7 @@ class SessionManager:
     def _session_to_meta(cls, session: Session) -> Dict[str, Any]:
         """Extrae metadatos de una sesión para persistencia."""
         return {
+            "title": session.title,
             "mode": session.mode,
             "model": session.model,
             "temperature": session.temperature,
@@ -161,6 +180,7 @@ class SessionManager:
             "max_agent_steps": session.max_agent_steps,
             "agent_task_timeout": session.agent_task_timeout,
             "system_prompt": session.system_prompt,
+            "active_skill": session.active_skill,
             "context_summary": session.context_summary,
             "pending_approval": session.pending_approval,
             "current_plan": session.current_plan,
@@ -210,6 +230,7 @@ class SessionManager:
         return Session(
             id=session_id,
             conversation=conv,
+            title=meta.get("title", ""),
             mode=meta.get("mode", OperationMode.AGENT),
             model=meta.get("model", OLLAMA_DEFAULT_MODEL),
             temperature=float(meta.get("temperature", 0.7)),
@@ -219,6 +240,7 @@ class SessionManager:
             max_agent_steps=int(meta.get("max_agent_steps", MAX_AGENT_STEPS)),
             agent_task_timeout=int(meta.get("agent_task_timeout", AGENT_TASK_TIMEOUT)),
             system_prompt=meta.get("system_prompt", ""),
+            active_skill=meta.get("active_skill"),
             context_summary=meta.get("context_summary", ""),
             pending_approval=meta.get("pending_approval"),
             current_plan=meta.get("current_plan"),

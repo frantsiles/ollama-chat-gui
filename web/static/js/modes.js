@@ -80,15 +80,14 @@ const Modes = {
      */
     updateModeIndicator(mode) {
         const indicator = document.getElementById('mode-indicator');
-        if (!indicator) return;
-
-        const modeNames = {
-            chat: 'Chat',
-            agent: 'Agent',
-            plan: 'Plan'
-        };
-
-        indicator.innerHTML = `Modo: <strong>${modeNames[mode] || mode}</strong>`;
+        if (indicator) {
+            const modeNames = { chat: 'Chat', agent: 'Agent', plan: 'Plan' };
+            indicator.innerHTML = `Modo: <strong>${modeNames[mode] || mode}</strong>`;
+        }
+        // Sync top-row mode selector label
+        if (window.Skills && typeof Skills.updateModeLabel === 'function') {
+            Skills.updateModeLabel(mode);
+        }
     },
 
     /**

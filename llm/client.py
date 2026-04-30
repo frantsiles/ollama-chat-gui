@@ -103,13 +103,26 @@ class OllamaClient:
         url = f"{self.base_url}/api/chat"
         try:
             response = requests.post(url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
         except requests.RequestException as exc:
             raise OllamaClientError("Error durante el chat con Ollama.") from exc
-        
-        data = response.json()
+
+        # Leer el cuerpo antes de raise_for_status para dar mensajes claros
+        try:
+            data = response.json()
+        except Exception:
+            data = {}
         if "error" in data:
-            raise OllamaClientError(str(data["error"]))
+            err = str(data["error"])
+            if response.status_code == 401:
+                raise OllamaClientError(
+                    f"El modelo '{model}' requiere autenticación (modelo cloud). "
+                    "Selecciona un modelo local como qwen2.5-coder o gemma."
+                )
+            raise OllamaClientError(err)
+        try:
+            response.raise_for_status()
+        except requests.HTTPError as exc:
+            raise OllamaClientError(f"Ollama respondió con error {response.status_code}.") from exc
 
         prompt_tokens = data.get("prompt_eval_count", 0)
         completion_tokens = data.get("eval_count", 0)
@@ -148,7 +161,14 @@ class OllamaClient:
             with requests.post(
                 url, json=payload, stream=True, timeout=self.timeout
             ) as response:
-                response.raise_for_status()
+                # Detect auth/error before streaming
+                if response.status_code == 401:
+                    raise OllamaClientError(
+                        f"El modelo '{model}' requiere autenticación (modelo cloud). "
+                        "Selecciona un modelo local como qwen2.5-coder o gemma."
+                    )
+                if not response.ok:
+                    raise OllamaClientError(f"Ollama respondió con error {response.status_code}.")
                 for line in response.iter_lines(decode_unicode=True):
                     if not line:
                         continue
@@ -156,14 +176,16 @@ class OllamaClient:
                         data = json.loads(line)
                     except json.JSONDecodeError:
                         continue
-                    
+
                     if "error" in data:
                         raise OllamaClientError(str(data["error"]))
-                    
+
                     message = data.get("message", {})
                     content = message.get("content")
                     if content:
                         yield content
+        except OllamaClientError:
+            raise
         except requests.RequestException as exc:
             raise OllamaClientError("Error durante el chat con Ollama.") from exc
     
