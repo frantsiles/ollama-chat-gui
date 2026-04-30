@@ -48,6 +48,13 @@ const Chat = {
         });
 
         this.inputEl.addEventListener('keydown', (e) => {
+            // ↑/↓ history navigation (delegate to Shortcuts)
+            if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && window.Shortcuts) {
+                if (Shortcuts.handleTextareaKey(e, this.inputEl)) {
+                    e.preventDefault();
+                    return;
+                }
+            }
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 this.sendMessage();
@@ -264,6 +271,9 @@ const Chat = {
     sendMessage() {
         const content = this.inputEl.value.trim();
         if (!content || this.isProcessing) return;
+
+        // Record for ↑/↓ recall
+        if (window.Shortcuts) Shortcuts.recordMessage(content);
 
         // Hide welcome message
         this.hideWelcome();

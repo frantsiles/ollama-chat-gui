@@ -27,6 +27,11 @@
     z-index: 10;
 }
 
+/* Pushes the ? button to the bottom of the activity bar */
+.activity-btn-bottom {
+    margin-top: auto;
+}
+
 .activity-btn {
     width: 36px;
     height: 36px;
@@ -1607,3 +1612,149 @@
     white-space: nowrap;
 }
 #history-resume-btn:hover { opacity: 0.85; }
+
+/* =============================================================================
+   Help Panel
+   ============================================================================= */
+
+.help-panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0 16px;
+}
+
+.help-section {
+    padding: 0 12px 4px;
+    margin-bottom: 4px;
+}
+
+.help-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    padding: 10px 0 6px;
+    border-bottom: 1px solid var(--border-primary);
+    margin-bottom: 8px;
+}
+.help-section-header svg { flex-shrink: 0; opacity: 0.7; }
+
+/* Keyboard shortcuts table */
+.help-shortcuts-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+}
+.help-shortcuts-table th {
+    text-align: left;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-tertiary);
+    padding: 0 4px 6px;
+    border-bottom: 1px solid var(--border-primary);
+}
+.help-shortcuts-table td {
+    padding: 5px 4px;
+    color: var(--text-primary);
+    vertical-align: middle;
+    border-bottom: 1px solid color-mix(in srgb, var(--border-primary) 40%, transparent);
+}
+.help-shortcuts-table tr:last-child td { border-bottom: none; }
+
+/* Divider row inside the table */
+.help-shortcuts-divider td {
+    font-size: 10px;
+    font-weight: 700;
+    color: var(--text-tertiary);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding-top: 10px !important;
+    border-bottom: none !important;
+}
+
+kbd {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 10px;
+    font-family: var(--font-mono, monospace);
+    color: var(--text-primary);
+    white-space: nowrap;
+    line-height: 1.5;
+}
+
+.help-note {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    font-style: italic;
+}
+
+/* Modes section */
+.help-mode-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+.help-mode-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+.help-mode-badge {
+    flex-shrink: 0;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 7px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    margin-top: 1px;
+}
+.badge-chat  { background: color-mix(in srgb, #6b7280 20%, transparent); color: #9ca3af; }
+.badge-agent { background: color-mix(in srgb, #3b82f6 20%, transparent); color: #60a5fa; }
+.badge-plan  { background: color-mix(in srgb, #8b5cf6 20%, transparent); color: #a78bfa; }
+
+/* Generic help text */
+.help-text {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin: 0;
+}
+.help-text code {
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-primary);
+    border-radius: 3px;
+    padding: 0 4px;
+    font-size: 11px;
+    font-family: var(--font-mono, monospace);
+}
+.help-text-muted { color: var(--text-tertiary); font-style: italic; }
+
+/* "Próximamente" badge */
+.help-coming-soon {
+    margin-left: auto;
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent-primary);
+    background: color-mix(in srgb, var(--accent-primary) 15%, transparent);
+    padding: 2px 6px;
+    border-radius: 8px;
+}
+
+/* Placeholder section slightly dimmed */
+.help-section-placeholder { opacity: 0.65; }

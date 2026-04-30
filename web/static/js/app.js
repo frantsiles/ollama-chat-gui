@@ -53,6 +53,7 @@ const App = {
         this.safeInitModule('Modes', window.Modes);
         this.safeInitModule('Skills', window.Skills);
         this.safeInitModule('History', window.History);
+        this.safeInitModule('Shortcuts', window.Shortcuts);
         this.safeInitModule('Chat', window.Chat);
         this.safeInitModule('MCP', window.MCP);
         Utils.log('APP', 'Module initialization finished');

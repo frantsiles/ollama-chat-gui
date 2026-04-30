@@ -149,6 +149,13 @@
                         <polyline points="12 6 12 12 16 14"/>
                     </svg>
                 </button>
+                <button type="button" class="activity-btn activity-btn-bottom" data-panel="help" id="activity-help" title="Ayuda y atajos de teclado">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/>
+                        <line x1="12" y1="17" x2="12.01" y2="17"/>
+                    </svg>
+                </button>
             </div>
 
             <!-- Side Panel -->
@@ -701,6 +708,130 @@
                     <input type="file" id="history-import-input" accept=".json" style="display:none">
                 </div>
 
+                <!-- ── HELP Panel ── -->
+                <div class="panel" data-panel="help" id="panel-help">
+                    <div class="panel-title">Ayuda</div>
+                    <div class="help-panel-body">
+
+                        <!-- Keyboard shortcuts -->
+                        <section class="help-section">
+                            <div class="help-section-header">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <rect x="2" y="4" width="20" height="16" rx="2"/>
+                                    <path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/>
+                                </svg>
+                                Atajos de teclado
+                            </div>
+                            <table class="help-shortcuts-table">
+                                <thead>
+                                    <tr><th>Atajo</th><th>Acción</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td><kbd>Enter</kbd></td>
+                                        <td>Enviar mensaje</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>Shift</kbd>+<kbd>Enter</kbd></td>
+                                        <td>Salto de línea</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td>
+                                        <td>Enviar mensaje (desde cualquier parte)</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>↑</kbd> <span class="help-note">(input vacío)</span></td>
+                                        <td>Recuperar mensaje anterior</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>↓</kbd> <span class="help-note">(navegando)</span></td>
+                                        <td>Ir al mensaje más reciente</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>Escape</kbd></td>
+                                        <td>Cancelar generación en curso</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>Ctrl</kbd>+<kbd>L</kbd></td>
+                                        <td>Enfocar el input de mensaje</td>
+                                    </tr>
+                                    <tr class="help-shortcuts-divider">
+                                        <td colspan="2">Paneles</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>E</kbd></td>
+                                        <td>Explorador de archivos</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td>
+                                        <td>Búsqueda en archivos</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>H</kbd></td>
+                                        <td>Historial de conversaciones</td>
+                                    </tr>
+                                    <tr>
+                                        <td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd></td>
+                                        <td>Configuración y skills</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </section>
+
+                        <!-- Modes -->
+                        <section class="help-section">
+                            <div class="help-section-header">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+                                </svg>
+                                Modos de operación
+                            </div>
+                            <div class="help-mode-list">
+                                <div class="help-mode-item">
+                                    <span class="help-mode-badge badge-chat">Chat</span>
+                                    <span>Conversación directa con el modelo. Sin herramientas, solo texto.</span>
+                                </div>
+                                <div class="help-mode-item">
+                                    <span class="help-mode-badge badge-agent">Agent</span>
+                                    <span>El modelo puede ejecutar herramientas: leer archivos, correr comandos, editar código.</span>
+                                </div>
+                                <div class="help-mode-item">
+                                    <span class="help-mode-badge badge-plan">Plan</span>
+                                    <span>Genera un plan de pasos antes de actuar. Ideal para tareas largas.</span>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Skills -->
+                        <section class="help-section">
+                            <div class="help-section-header">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+                                </svg>
+                                Skills
+                            </div>
+                            <p class="help-text">Los skills son instrucciones personalizadas que se inyectan al system prompt del agente. Se guardan como archivos <code>.md</code> en <code>.agents/skills/</code> del workspace.</p>
+                        </section>
+
+                        <!-- Placeholder: Guía de usuario -->
+                        <section class="help-section help-section-placeholder">
+                            <div class="help-section-header">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                    <line x1="16" y1="13" x2="8" y2="13"/>
+                                    <line x1="16" y1="17" x2="8" y2="17"/>
+                                    <polyline points="10 9 9 9 8 9"/>
+                                </svg>
+                                Guía de usuario
+                                <span class="help-coming-soon">Próximamente</span>
+                            </div>
+                            <p class="help-text help-text-muted">La guía completa de uso, casos de ejemplo y mejores prácticas estará disponible aquí.</p>
+                        </section>
+
+                    </div>
+                </div>
+
                 <!-- Footer: connection status -->
                 <div class="side-panel-footer">
                     <div class="connection-status" id="connection-status">
@@ -992,6 +1123,7 @@
     <script src="/static/js/modes.js"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/history.js"></script>
+    <script src="/static/js/shortcuts.js"></script>
     <script src="/static/js/plan.js"></script>
     <script src="/static/js/mcp.js"></script>
     <script src="/static/js/explorer.js"></script>
