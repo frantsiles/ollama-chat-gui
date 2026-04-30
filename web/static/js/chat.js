@@ -239,7 +239,14 @@ const Chat = {
         });
 
         wsManager.on('agent_step', (data) => {
-            this.updateTypingStep(data.message);
+            const kind = data.kind || 'status';
+            if (kind === 'exec') {
+                this.addTypingLogEntry({ kind: 'exec', command: data.command, message: data.message });
+            } else if (kind === 'tool_result') {
+                this.addTypingLogEntry({ kind: 'tool_result', tool: data.tool, success: data.success, output: data.output });
+            } else {
+                this.updateTypingStep(data.message);
+            }
         });
 
         wsManager.on('cancelled', (data) => {
@@ -698,19 +705,47 @@ const Chat = {
     },
 
     /**
-     * Update typing indicator text with current agent step
+     * Update the status line in the typing indicator.
      */
     updateTypingStep(message) {
         const indicator = document.getElementById('typing-indicator');
         if (!indicator) return;
-        const span = indicator.querySelector('span');
-        if (span) {
-            span.textContent = message;
-        }
+        const span = indicator.querySelector('.typing-status-text');
+        if (span) span.textContent = message;
     },
 
     /**
-     * Show typing indicator with cancel button
+     * Append a log entry (exec or tool_result) to the typing indicator log.
+     */
+    addTypingLogEntry(entry) {
+        let indicator = document.getElementById('typing-indicator');
+        if (!indicator) this.showTypingIndicator();
+        indicator = document.getElementById('typing-indicator');
+        if (!indicator) return;
+
+        const log = indicator.querySelector('.typing-log');
+        if (!log) return;
+
+        const item = document.createElement('div');
+
+        if (entry.kind === 'exec') {
+            item.className = 'typing-log-exec';
+            item.innerHTML = `<span class="typing-log-icon">▶</span><code class="typing-log-cmd">${Utils.escapeHtml(entry.command || '')}</code>`;
+        } else if (entry.kind === 'tool_result') {
+            item.className = 'typing-log-result ' + (entry.success ? 'ok' : 'err');
+            const icon = entry.success ? '✓' : '✗';
+            const out  = (entry.output || '').trim();
+            item.innerHTML = `<span class="typing-log-icon">${icon}</span>`
+                + (out ? `<pre class="typing-log-output">${Utils.escapeHtml(out.slice(0, 800))}</pre>` : '');
+        }
+
+        log.appendChild(item);
+        log.scrollTop = log.scrollHeight;
+        this.scrollToBottom();
+    },
+
+    /**
+     * Show typing indicator — redesigned as a live activity log.
      */
     showTypingIndicator() {
         const existing = document.getElementById('typing-indicator');
@@ -721,21 +756,17 @@ const Chat = {
         indicator.className = 'message assistant';
         indicator.innerHTML = `
             <div class="message-avatar">🦙</div>
-            <div class="typing-indicator">
-                <div class="typing-dots">
-                    <div class="typing-dot"></div>
-                    <div class="typing-dot"></div>
-                    <div class="typing-dot"></div>
+            <div class="typing-activity">
+                <div class="typing-header">
+                    <div class="typing-dots">
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                        <div class="typing-dot"></div>
+                    </div>
+                    <span class="typing-status-text">Pensando…</span>
+                    <button class="typing-cancel-btn" onclick="wsManager.sendCancel()" title="Cancelar">✕ Cancelar</button>
                 </div>
-                <span>Pensando...</span>
-                <button
-                    style="margin-left:12px;padding:2px 10px;font-size:0.8em;
-                           border:1px solid #888;border-radius:4px;cursor:pointer;
-                           background:transparent;color:inherit;opacity:0.75"
-                    onclick="wsManager.sendCancel()"
-                    title="Cancelar ejecución">
-                    ✕ Cancelar
-                </button>
+                <div class="typing-log"></div>
             </div>
         `;
 
@@ -744,13 +775,11 @@ const Chat = {
     },
 
     /**
-     * Hide typing indicator
+     * Hide typing indicator.
      */
     hideTypingIndicator() {
         const indicator = document.getElementById('typing-indicator');
-        if (indicator) {
-            indicator.remove();
-        }
+        if (indicator) indicator.remove();
     },
 
     /**
@@ -1001,6 +1030,37 @@ const Chat = {
      */
     scrollToBottom() {
         Utils.scrollToBottom(this.messagesContainer);
+    },
+
+    /**
+     * Called when the active model changes. Updates UI based on capabilities.
+     * @param {string} model
+     * @param {string[]} caps — capabilities array from /api/models
+     */
+    onModelChange(model, caps) {
+        const hasVision = caps.includes('vision');
+        const hasTools  = caps.includes('tools');
+
+        // Update attach button tooltip to signal vision support
+        if (this.attachBtn) {
+            if (hasVision) {
+                this.attachBtn.title = 'Adjuntar archivo o imagen';
+                this.attachBtn.classList.remove('no-vision');
+            } else {
+                this.attachBtn.title = 'Adjuntar archivo (este modelo no soporta imágenes)';
+                this.attachBtn.classList.add('no-vision');
+            }
+        }
+
+        // Show capability pills next to model indicator in the chat header
+        const indicator = document.getElementById('model-indicator');
+        if (indicator) {
+            const badges = [];
+            if (hasTools)  badges.push('<span class="cap-badge cap-tools" title="Soporta tool calling nativo">⚡ tools</span>');
+            if (hasVision) badges.push('<span class="cap-badge cap-vision" title="Soporta imágenes">👁 vision</span>');
+            const badgeHtml = badges.length ? ' ' + badges.join(' ') : '';
+            indicator.innerHTML = `Modelo: <strong>${model || '-'}</strong>${badgeHtml}`;
+        }
     },
 
     /**

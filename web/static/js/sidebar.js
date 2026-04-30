@@ -182,12 +182,18 @@ const Sidebar = {
                 data.models.forEach(model => {
                     const option = document.createElement('option');
                     option.value = model.name;
+                    const caps = model.capabilities || [];
                     let label = model.name;
-                    if (model.cloud) label += ' ☁';
-                    if (model.capabilities && model.capabilities.includes('tools')) label += ' ⚡';
+                    if (model.cloud)             label += ' ☁';
+                    if (caps.includes('tools'))  label += ' ⚡';
+                    if (caps.includes('vision')) label += ' 👁';
                     option.textContent = label;
-                    if (model.cloud) option.title = 'Modelo cloud — requiere autenticación en ollama.com';
-                    App.state.modelCapabilities[model.name] = model.capabilities || [];
+                    const hints = [];
+                    if (model.cloud)             hints.push('Requiere autenticación en ollama.com');
+                    if (caps.includes('tools'))  hints.push('Tool calling nativo');
+                    if (caps.includes('vision')) hints.push('Soporta imágenes');
+                    if (hints.length) option.title = hints.join(' · ');
+                    App.state.modelCapabilities[model.name] = caps;
                     this.modelSelect.appendChild(option);
                 });
 
@@ -298,8 +304,15 @@ const Sidebar = {
     },
 
     updateModelIndicator(model) {
-        const el = document.getElementById('model-indicator');
-        if (el) el.innerHTML = `Modelo: <strong>${model || '-'}</strong>`;
+        // Notify Chat with capabilities so it can update its UI
+        const caps = (App.state.modelCapabilities || {})[model] || [];
+        if (window.Chat && typeof Chat.onModelChange === 'function') {
+            Chat.onModelChange(model, caps);
+        } else {
+            // Chat not yet initialized — just update the indicator text
+            const el = document.getElementById('model-indicator');
+            if (el) el.innerHTML = `Modelo: <strong>${model || '-'}</strong>`;
+        }
         // Sync compact model picker in input footer
         if (window.Skills && typeof Skills.updateModelLabel === 'function') {
             Skills.updateModelLabel(model);

@@ -39,9 +39,12 @@ _ACTION_KEYWORDS = {
     "edita", "editar", "edite",
     "actualiza", "actualizar", "actualice",
     "elimina", "eliminar", "elimine", "borra", "borrar",
-    # Ejecución
+    # Ejecución / shell / git
     "ejecuta", "ejecutar", "ejecute", "corre", "correr", "corra",
     "instala", "instalar", "instale",
+    "git", "commit", "push", "pull", "merge", "branch", "checkout",
+    "npm", "pip", "make", "bash", "sh", "docker", "kubectl",
+    "run", "exec",
     # Generación
     "genera", "generar", "genere", "implementa", "implementar",
     "documenta", "documentar", "refactoriza", "refactorizar",

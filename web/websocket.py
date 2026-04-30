@@ -104,6 +104,16 @@ async def _build_full_content(
     return f"{content}\n\n---\nArchivos adjuntos:\n{attachment_ctx}"
 
 
+import re as _re
+_AFFIRMATIVE_RE = _re.compile(
+    r"^(s[íi]|yes|ok|okay|dale|claro|adelante|procede|hazlo|"
+    r"ejecuta|confirmo?|confirmar|apruebo?|aprobar|approve|"
+    r"proceed|go\s+ahead|do\s+it|continue|continuar|perfecto|"
+    r"listo|va|venga|ándale|ándele)[!.,\s]*$",
+    _re.IGNORECASE,
+)
+
+
 async def handle_chat_message(
     websocket: WebSocket,
     session: Session,
@@ -113,6 +123,11 @@ async def handle_chat_message(
     raw_content = data.get("content", "").strip()
     if not raw_content:
         await websocket.send_json({"type": "error", "message": "Empty message"})
+        return
+
+    # --- Si hay una aprobación pendiente y el mensaje es una confirmación, redirigir ---
+    if session.pending_approval and _AFFIRMATIVE_RE.match(raw_content):
+        await handle_approval(websocket, session, {"approved": True})
         return
 
     # --- Validación de tamaño de input ---
@@ -230,7 +245,8 @@ async def handle_chat_message(
                 step_queue: asyncio.Queue = asyncio.Queue()
                 loop = asyncio.get_running_loop()
 
-                def step_callback(msg: str) -> None:
+                def step_callback(msg) -> None:
+                    """Acepta str o dict con campos {kind, ...}."""
                     loop.call_soon_threadsafe(step_queue.put_nowait, msg)
 
                 agent_task = asyncio.create_task(
@@ -251,19 +267,26 @@ async def handle_chat_message(
                     while not agent_task.done():
                         try:
                             step_msg = step_queue.get_nowait()
-                            await websocket.send_json({
-                                "type": "agent_step",
-                                "message": step_msg,
-                            })
+                            if isinstance(step_msg, dict):
+                                await websocket.send_json({
+                                    "type": "agent_step",
+                                    **step_msg,
+                                })
+                            else:
+                                await websocket.send_json({
+                                    "type": "agent_step",
+                                    "kind": "status",
+                                    "message": step_msg,
+                                })
                         except asyncio.QueueEmpty:
                             await asyncio.sleep(0.1)
                     # Drenar lo que quedó al terminar
                     while not step_queue.empty():
                         step_msg = step_queue.get_nowait()
-                        await websocket.send_json({
-                            "type": "agent_step",
-                            "message": step_msg,
-                        })
+                        if isinstance(step_msg, dict):
+                            await websocket.send_json({"type": "agent_step", **step_msg})
+                        else:
+                            await websocket.send_json({"type": "agent_step", "kind": "status", "message": step_msg})
                     exc = agent_task.exception()
                     if exc:
                         raise exc

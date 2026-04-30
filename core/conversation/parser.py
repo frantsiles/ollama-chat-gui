@@ -318,14 +318,37 @@ class RunCommandHeuristic(ToolHeuristic):
         r'ejecutaré (el |un )?comando|'
         r'corriendo (el |un )?comando|'
         r'run_command\s*\(|'
+        r'voy a (correr|ejecutar|hacer)\s+(git|npm|pip|python|bash|sh|make|cargo|go|yarn|docker)\b|'
+        r'ejecutar[eé]?\s+(git|npm|pip|python|bash|sh|make|cargo|go|yarn|docker)\b|'
         r"i(?:'ll| will| am going to) (run|execute) (the |a )?command|"
-        r'running the command|let me (run|execute) (the |a )?command)\b',
+        r'running the command|let me (run|execute) (the |a )?command|'
+        r"i(?:'ll| will| am going to) (run|execute|do) (a |the )?"
+        r'(git|npm|pip|python|bash|make|cargo|yarn|docker)\b)\b',
         re.IGNORECASE,
     )
 
-    _LABEL = re.compile(r'(?:comando|command):\s*`?([^\n`]{2,200})`?', re.IGNORECASE)
+    # Detects explicit "Voy a ejecutar el comando: `...`" pattern encouraged by the system prompt
+    _LABEL = re.compile(
+        r'(?:comando|command)[:\s]+`([^\n`]{2,300})`',
+        re.IGNORECASE,
+    )
+
+    # Detects shell commands in backticks that look like real commands
+    _SHELL_CMD_PREFIXES = (
+        "git", "npm", "pip", "python", "python3", "bash", "sh",
+        "make", "cargo", "go ", "yarn", "docker", "kubectl",
+        "ls", "cat", "grep", "find", "cp", "mv", "rm", "mkdir",
+        "./", "node", "uvicorn", "pytest", "ruff", "black",
+    )
 
     def match(self, response: str) -> Optional[Dict[str, Any]]:
+        # Fast-path: explicit "comando: `...`" label (system prompt–guided format)
+        label = self._LABEL.search(response)
+        if label:
+            cmd = label.group(1).strip().lstrip("$ ")
+            if cmd:
+                return {"needs_tool": True, "tool": "run_command", "args": {"command": cmd}}
+
         if not self._INTENT.search(response):
             return None
 
@@ -349,14 +372,24 @@ class RunCommandHeuristic(ToolHeuristic):
                 if command:
                     return command
 
-        # 2. "comando: xxx" o "command: xxx"
-        label = self._LABEL.search(text)
-        if label:
-            return label.group(1).strip()
+        # 2. "comando: xxx" o "command: xxx" (sin backticks)
+        label_bare = re.search(r'(?:comando|command)[:\s]+([^\n`]{2,200})', text, re.IGNORECASE)
+        if label_bare:
+            cmd = label_bare.group(1).strip().strip('`')
+            if cmd:
+                return cmd
 
-        # 3. Backtick inline (preferir el más largo, suele ser el comando)
+        # 3. Backtick inline that looks like a shell command
         candidates = [m.group(1).strip() for m in _INLINE_BACKTICK_PATTERN.finditer(text)]
-        candidates = [c for c in candidates if " " in c or "/" in c or c.startswith(("./", "python", "git", "npm", "ls", "cat"))]
+        shell_candidates = [
+            c for c in candidates
+            if c.startswith(self._SHELL_CMD_PREFIXES) and len(c) > 3
+        ]
+        if shell_candidates:
+            return max(shell_candidates, key=len)
+
+        # 4. Any inline backtick with spaces (fallback)
+        candidates = [c for c in candidates if " " in c or "/" in c]
         if candidates:
             return max(candidates, key=len)
 

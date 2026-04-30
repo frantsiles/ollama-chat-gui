@@ -506,6 +506,15 @@ class Agent:
             self.state.add_trace("Fast-path conversacional (sin parser/reflexión)")
             return self._run_fast_path(user_input, conversation)
 
+        if self._model_supports_tools():
+            self.state.add_trace("Modo: native tool calling")
+            return self._run_native_tools(
+                user_input=user_input,
+                conversation=conversation,
+                step_callback=step_callback,
+                cancel_check=cancel_check,
+            )
+
         return self._run_natural(
             user_input=user_input,
             conversation=conversation,
@@ -545,6 +554,231 @@ class Agent:
             content=response,
             status="completed",
             trace=self.state.trace,
+            new_cwd=str(self.current_cwd),
+            token_usage=dict(self._token_usage),
+        )
+
+    def _model_supports_tools(self) -> bool:
+        """Verifica si el modelo activo soporta native tool calling (resultado cacheado)."""
+        if not hasattr(self, "_tools_cap_cache"):
+            self._tools_cap_cache: Dict[str, bool] = {}
+        if self.model not in self._tools_cap_cache:
+            try:
+                self._tools_cap_cache[self.model] = self.client.model_supports_tools(self.model)
+            except Exception:
+                self._tools_cap_cache[self.model] = False
+        return self._tools_cap_cache.get(self.model, False)
+
+    # ------------------------------------------------------------------
+    # Modo native tool calling: JSON estructurado (modelos con soporte)
+    # ------------------------------------------------------------------
+
+    def _run_native_tools(
+        self,
+        user_input: str,
+        conversation: Conversation,
+        step_callback: Optional[Callable[[str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> AgentResponse:
+        """Ciclo agente usando native function calling de Ollama.
+
+        El modelo devuelve tool_calls en JSON estructurado — no se necesita
+        parser ni heurísticas regex.
+        """
+        import json as _json
+        from llm.prompts import NATURAL_AGENT_SYSTEM_PROMPT
+        from core.models import Message, MessageRole
+
+        self._context_builder.set_cwd(self.current_cwd)
+        workspace_ctx = self._context_builder.build_workspace_snapshot()
+        full_system_prompt = f"{NATURAL_AGENT_SYSTEM_PROMPT}\n{workspace_ctx}"
+        if self._custom_instructions:
+            full_system_prompt += f"\n\nInstrucciones del usuario:\n{self._custom_instructions}"
+
+        pre_ctx = self._pre_explore_workspace(user_input)
+        if pre_ctx:
+            self.state.add_trace("Pre-exploración automática del workspace")
+            conversation.add_system_message(pre_ctx)
+
+        tools = self.tool_registry.get_ollama_tools()
+        limit = self._max_agent_steps or MAX_AGENT_STEPS
+        tool_results: List[ToolResult] = []
+        # Mensajes de tool calls + resultados acumulados en este turno.
+        # No se persisten en `conversation` (igual que en el loop natural) salvo
+        # los tool results que el modelo necesita recordar en turnos futuros.
+        extra_messages: List[Dict[str, Any]] = []
+
+        for step in range(1, limit + 1):
+            self.state.step_count = step
+
+            if cancel_check and cancel_check():
+                self.state.is_running = False
+                return AgentResponse(
+                    content="Ejecución cancelada por el usuario.",
+                    status="cancelled",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                    token_usage=dict(self._token_usage),
+                )
+
+            self.state.add_trace(f"Paso {step}: native tool call")
+            if step_callback:
+                step_callback(f"Paso {step}: consultando al modelo")
+
+            messages = self._build_messages(conversation, system_prompt=full_system_prompt)
+            messages.extend(extra_messages)
+
+            try:
+                raw = self.client.chat_with_tools(
+                    model=self.model,
+                    messages=messages,
+                    tools=tools,
+                    options={"temperature": self.temperature},
+                )
+            except OllamaClientError as exc:
+                self.state.is_running = False
+                return AgentResponse(
+                    content="",
+                    status="error",
+                    error=str(exc),
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                )
+
+            content = raw.get("content", "") or ""
+            tool_calls_raw = raw.get("tool_calls", []) or []
+
+            if not tool_calls_raw:
+                # Sin tool_calls nativos — el modelo puede haber expresado la intención
+                # como texto libre (ej. "Voy a ejecutar el comando: `git...`").
+                # Intentar el parser heurístico antes de devolver como respuesta final.
+                if content:
+                    parsed = self._parse_natural_response(content)
+                    if parsed.get("needs_tool"):
+                        tool_name = parsed.get("tool", "")
+                        tool_args  = parsed.get("args", {})
+                        # Reinyectar como si fuera un tool_call nativo y continuar
+                        tool_calls_raw = [{
+                            "function": {
+                                "name": tool_name,
+                                "arguments": tool_args if isinstance(tool_args, dict) else {},
+                            }
+                        }]
+                        self.state.add_trace(
+                            f"Paso {step}: fallback heurístico → {tool_name}"
+                        )
+                        # No hacer return — caer al bloque de ejecución más abajo
+
+                if not tool_calls_raw:
+                    # Realmente no hay tool → respuesta final
+                    final = self._reflect_on_response(content or "Listo.", conversation)
+                    conversation.add_assistant_message(final)
+                    self.state.is_running = False
+                    return AgentResponse(
+                        content=final,
+                        status="completed",
+                        trace=self.state.trace,
+                        tool_results=tool_results,
+                        new_cwd=str(self.current_cwd),
+                        token_usage=dict(self._token_usage),
+                    )
+
+            # Procesar primer tool call (Ollama devuelve uno por turno en práctica)
+            tc = tool_calls_raw[0]
+            func = tc.get("function", {})
+            tool_name = func.get("name", "")
+            tool_args = func.get("arguments", {})
+            if isinstance(tool_args, str):
+                try:
+                    tool_args = _json.loads(tool_args)
+                except Exception:
+                    tool_args = {}
+
+            tool_call = ToolCall(
+                tool=tool_name,
+                args=tool_args if isinstance(tool_args, dict) else {},
+            )
+
+            # Validación
+            validation_error = self.tool_registry.validate_tool_call(tool_call)
+            if validation_error:
+                self.state.add_trace(f"Paso {step}: tool inválida — {validation_error}")
+                extra_messages.append({
+                    "role": "assistant", "content": content,
+                    "tool_calls": tool_calls_raw,
+                })
+                extra_messages.append({
+                    "role": "tool",
+                    "content": f"Error: {validation_error}",
+                })
+                continue
+
+            # Aprobación
+            is_write = self.tool_registry.is_tool_write_operation(tool_call)
+            if self.approval_manager.requires_approval(tool_call, is_write):
+                if content:
+                    conversation.add_assistant_message(content)
+                self.state.pending_approval = tool_call
+                self.approval_manager.request_approval(tool_call)
+                self.state.is_running = False
+                return AgentResponse(
+                    content=f"Se requiere aprobación para: `{tool_call}`",
+                    status="awaiting_approval",
+                    trace=self.state.trace,
+                    tool_results=tool_results,
+                    new_cwd=str(self.current_cwd),
+                    token_usage=dict(self._token_usage),
+                )
+
+            # Ejecución
+            cmd_preview = tool_args.get("command", "") if tool_name == "run_command" else ""
+            if step_callback:
+                if cmd_preview:
+                    step_callback({
+                        "kind": "exec",
+                        "message": f"Ejecutando: {tool_name}",
+                        "command": cmd_preview,
+                    })
+                else:
+                    step_callback(f"Paso {step}: ejecutando {tool_name}")
+            result = self.tool_registry.execute(tool_call)
+            tool_results.append(result)
+
+            if result.new_cwd:
+                self.set_cwd(Path(result.new_cwd))
+
+            tool_output = result.output if result.success else f"Error: {result.error}"
+
+            # Notificar resultado al frontend
+            if step_callback:
+                step_callback({
+                    "kind": "tool_result",
+                    "tool": tool_name,
+                    "success": result.success,
+                    "output": (tool_output or "")[:2000],
+                })
+
+            # Añadir al contexto: respuesta del asistente + resultado de tool
+            extra_messages.append({
+                "role": "assistant", "content": content,
+                "tool_calls": tool_calls_raw,
+            })
+            extra_messages.append({"role": "tool", "content": tool_output})
+            # Persistir en conversation para que el modelo recuerde en turnos futuros
+            tool_result_text = PromptManager.build_tool_result_context(
+                step=step,
+                tool_call=str(tool_call),
+                result=tool_output,
+            )
+            conversation.add_system_message(tool_result_text)
+
+        self.state.is_running = False
+        return AgentResponse(
+            content=f"Se alcanzó el límite de {limit} pasos.",
+            status="max_steps",
+            trace=self.state.trace,
+            tool_results=tool_results,
             new_cwd=str(self.current_cwd),
             token_usage=dict(self._token_usage),
         )

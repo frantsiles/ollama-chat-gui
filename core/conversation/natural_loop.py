@@ -12,9 +12,19 @@ NO conoce detalles de:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+_SIMULATION_RE = re.compile(
+    r"simulaci[oó]n\s+de\s+la\s+ejecuci[oó]n|"
+    r"simular[eé]\s+(el\s+)?comando|"
+    r"como\s+si\s+hubiera\s+ejecutado|"
+    r"fingir[eé]\s+ejecutar|"
+    r"ejecuci[oó]n\s+simulada",
+    re.IGNORECASE,
+)
 
 from config import MAX_AGENT_STEPS
 from core.models import (
@@ -130,6 +140,24 @@ class NaturalConversationLoop:
 
             consecutive_empty = 0
 
+            # Detectar simulación explícita — el modelo finge ejecutar en lugar de
+            # llamar a una tool. Inyectar corrección y continuar el loop.
+            if _SIMULATION_RE.search(response_text):
+                self._state.add_trace(
+                    f"Paso {step}: respuesta de simulación detectada — corrigiendo"
+                )
+                extra_messages.append({"role": "assistant", "content": response_text})
+                extra_messages.append({
+                    "role": "system",
+                    "content": (
+                        "CORRECCIÓN: No puedes simular ni inventar resultados de herramientas. "
+                        "Si necesitas ejecutar un comando real, usa run_command() ahora mismo. "
+                        "Anuncia el comando con el formato: "
+                        "\"Voy a ejecutar el comando: `<comando>`\" y nada más."
+                    ),
+                })
+                continue
+
             self._state.add_trace(f"Paso {step}: analizando respuesta con parser")
             parsed = self._parse_response(response_text)
 
@@ -184,12 +212,28 @@ class NaturalConversationLoop:
                 )
 
             # Ejecución
-            self._notify(f"Paso {step}: ejecutando {tool_call.tool}", step_callback)
+            cmd_preview = tool_args.get("command", "") if tool_name == "run_command" else ""
+            if cmd_preview:
+                self._notify({
+                    "kind": "exec",
+                    "message": f"Ejecutando: {tool_name}",
+                    "command": cmd_preview,
+                }, step_callback)
+            else:
+                self._notify(f"Paso {step}: ejecutando {tool_call.tool}", step_callback)
             result = self._execute_tool(tool_call)
             tool_results.append(result)
 
             if result.new_cwd:
                 self._on_cwd_change(Path(result.new_cwd))
+
+            # Notificar resultado de la tool al frontend
+            self._notify({
+                "kind": "tool_result",
+                "tool": tool_call.tool,
+                "success": result.success,
+                "output": (result.output or "")[:2000],
+            }, step_callback)
 
             # Razonamiento intermedio del asistente: solo en este run
             extra_messages.append({"role": "assistant", "content": response_text})
@@ -221,10 +265,11 @@ class NaturalConversationLoop:
 
     def _notify(
         self,
-        message: str,
-        step_callback: Optional[Callable[[str], None]],
+        message,
+        step_callback,
     ) -> None:
         """Registra el evento en el trace y notifica al callback si existe."""
-        self._state.add_trace(message)
+        trace_text = message if isinstance(message, str) else message.get("message", str(message))
+        self._state.add_trace(trace_text)
         if step_callback:
             step_callback(message)
