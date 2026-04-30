@@ -1252,6 +1252,28 @@
     color: var(--text-tertiary);
 }
 
+.plan-step-result {
+    margin-top: var(--space-xs);
+    padding: var(--space-xs) var(--space-sm);
+    background: var(--bg-secondary);
+    border-left: 2px solid var(--accent-primary);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: var(--text-xs);
+    color: var(--text-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.plan-step-result p {
+    margin: 0 0 var(--space-xs) 0;
+}
+
+.plan-step-result p:last-child {
+    margin-bottom: 0;
+}
+
 .plan-actions {
     display: flex;
     gap: var(--space-sm);

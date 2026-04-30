@@ -109,6 +109,7 @@ class PlanExecutor:
                 auto_execute, step_callback,
             )
         else:
+            self._execute_step_as_text(current_step, plan, conversation)
             current_step.status = StepStatus.COMPLETED
 
         if step_callback:
@@ -241,6 +242,55 @@ class PlanExecutor:
             resolved_args = retry_call.args
 
         return False
+
+    # ------------------------------------------------------------------
+    # Paso sin herramienta: generar contenido via LLM
+    # ------------------------------------------------------------------
+
+    def _execute_step_as_text(
+        self,
+        current_step,
+        plan: Plan,
+        conversation: Conversation,
+    ) -> None:
+        """Para pasos sin herramienta: llama al LLM para generar análisis/contenido real.
+
+        Evita que el paso complete silenciosamente sin producir ningún output.
+        """
+        prev_results = self._collect_observations(conversation)
+
+        system = (
+            f"Estás ejecutando el paso {current_step.id} de un plan titulado '{plan.title}'.\n"
+            "Este paso es informativo/analítico y no requiere ejecutar una herramienta.\n"
+            "Genera la respuesta o análisis correspondiente a este paso de forma concisa y útil.\n"
+            "Responde en el mismo idioma que el plan."
+        )
+        messages = [{"role": "system", "content": system}]
+        if prev_results:
+            messages.append({
+                "role": "system",
+                "content": "Resultados de pasos anteriores:\n" + "\n---\n".join(prev_results[-5:]),
+            })
+        messages.append({
+            "role": "user",
+            "content": f"Ejecuta este paso: {current_step.description}",
+        })
+
+        try:
+            output = self._llm_call(messages, None).strip()
+        except Exception:
+            output = current_step.description
+
+        from core.models import ToolResult
+        current_step.result = ToolResult(success=True, output=output)
+        self._state.add_trace(f"Paso {current_step.id} completado (informativo)")
+
+        observation = PromptManager.build_tool_result_context(
+            step=current_step.id,
+            tool_call=f"[informativo] {current_step.description}",
+            result=output,
+        )
+        conversation.add_system_message(observation)
 
     # ------------------------------------------------------------------
     # Resolución de args dinámicos

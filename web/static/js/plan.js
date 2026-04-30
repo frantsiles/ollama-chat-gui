@@ -124,6 +124,9 @@ const Plan = {
                 const statusClass = this.getStepStatusClass(step.status);
                 const statusIcon = this.getStepStatusIcon(step.status);
 
+                const resultOutput = step.result && step.result.output ? step.result.output : null;
+                const isCompleted = step.status === 'completed';
+
                 html += `
                     <div class="plan-step ${statusClass}">
                         <div class="plan-step-number">${statusIcon}</div>
@@ -135,6 +138,9 @@ const Plan = {
                                 <div class="plan-step-tool">
                                     🔧 ${Utils.escapeHtml(step.tool)}
                                 </div>
+                            ` : ''}
+                            ${isCompleted && resultOutput ? `
+                                <div class="plan-step-result">${Utils.escapeHtml(resultOutput)}</div>
                             ` : ''}
                             ${step.error_message ? `
                                 <div class="plan-step-error">
