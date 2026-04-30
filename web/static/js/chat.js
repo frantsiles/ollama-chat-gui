@@ -17,6 +17,12 @@ const Chat = {
     isProcessing: false,
     streamingMessage: null,
 
+    // Context chips (@-mentions)
+    contextChips: [],          // [{ path, name }]
+    _chipPickerOpen: false,
+    _chipQuery: '',
+    _chipDebounce: null,
+
     /**
      * Initialize chat module
      */
@@ -29,6 +35,11 @@ const Chat = {
         this.fileInput = document.getElementById('file-input');
         this.attachmentsPreview = document.getElementById('attachments-preview');
         this.welcomeMessage = document.getElementById('welcome-message');
+        this._chipsBar   = document.getElementById('context-chips-bar');
+        this._chipsList  = document.getElementById('context-chips-list');
+        this._chipPicker = document.getElementById('chips-picker');
+        this._chipPickerList = document.getElementById('chips-picker-list');
+        this._chipPickerQuery = document.getElementById('chips-picker-query');
 
         this.bindEvents();
         this.setupWebSocketHandlers();
@@ -48,6 +59,25 @@ const Chat = {
         });
 
         this.inputEl.addEventListener('keydown', (e) => {
+            // Close chip picker on Escape
+            if (e.key === 'Escape' && this._chipPickerOpen) {
+                e.preventDefault();
+                this._closeChipPicker();
+                return;
+            }
+            // Navigate chip picker with arrow keys
+            if (this._chipPickerOpen && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) {
+                e.preventDefault();
+                this._navigateChipPicker(e.key === 'ArrowDown' ? 1 : -1);
+                return;
+            }
+            // Confirm chip picker selection with Enter
+            if (this._chipPickerOpen && e.key === 'Enter') {
+                e.preventDefault();
+                const active = this._chipPickerList?.querySelector('.chips-picker-item.active');
+                if (active) active.click();
+                return;
+            }
             // ↑/↓ history navigation (delegate to Shortcuts)
             if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && window.Shortcuts) {
                 if (Shortcuts.handleTextareaKey(e, this.inputEl)) {
@@ -60,6 +90,9 @@ const Chat = {
                 this.sendMessage();
             }
         });
+
+        // Detect @ to open chip picker
+        this.inputEl.addEventListener('input', () => this._onInputForChips());
 
         // Clipboard paste: capture screenshots and files alongside text.
         this.inputEl.addEventListener('paste', (e) => this.handlePaste(e));
@@ -268,7 +301,7 @@ const Chat = {
     /**
      * Send message
      */
-    sendMessage() {
+    async sendMessage() {
         const content = this.inputEl.value.trim();
         if (!content || this.isProcessing) return;
 
@@ -280,7 +313,13 @@ const Chat = {
 
         // Snapshot attachments before they're cleared, so the rendered bubble
         // keeps owning their previewUrls.
-        const sentAttachments = this.attachments.slice();
+        // Also include context chips as lean labels (content fetched async later).
+        const chipLabels = this.contextChips.map(c => ({
+            kind: 'text',
+            name: c.name,
+            isChip: true,
+        }));
+        const sentAttachments = [...chipLabels, ...this.attachments];
 
         // Render user message
         this.renderMessage({
@@ -295,10 +334,16 @@ const Chat = {
         Utils.autoResizeTextarea(this.inputEl);
         this.updateSendButton();
 
+        // Resolve context chips → text attachments (async, may fetch file content)
+        const chipAtts = await this._resolveChipsToAttachments();
+
         // Split attachments into text (file content) and images (base64).
-        const textAtts = this.attachments
-            .filter(a => a.kind === 'text')
-            .map(({ name, content, size }) => ({ name, content, size }));
+        const textAtts = [
+            ...chipAtts,
+            ...this.attachments
+                .filter(a => a.kind === 'text')
+                .map(({ name, content, size }) => ({ name, content, size })),
+        ];
         const imageAtts = this.attachments
             .filter(a => a.kind === 'image')
             .map(a => a.base64);
@@ -320,8 +365,9 @@ const Chat = {
             wsManager.sendChat(content, textAtts, imageAtts, imageNames);
         }
 
-        // Clear attachments
+        // Clear attachments and context chips
         this.clearAttachments();
+        this._clearChips();
     },
 
     /**
@@ -964,6 +1010,185 @@ const Chat = {
         const hasContent = this.inputEl.value.trim().length > 0;
         const isConnected = wsManager && wsManager.isConnected;
         this.sendBtn.disabled = !hasContent || this.isProcessing || !isConnected;
+    },
+
+    // =========================================================================
+    // Context Chips — @-mention file picker
+    // =========================================================================
+
+    /** Called on every input event; decides whether to open/update picker. */
+    _onInputForChips() {
+        const val   = this.inputEl.value;
+        const caret = this.inputEl.selectionStart;
+        // Find the last @ before the caret with no spaces after it
+        const before = val.slice(0, caret);
+        const match  = before.match(/@([^\s@]*)$/);
+
+        if (match) {
+            this._chipQuery = match[1];
+            if (this._chipPickerQuery) this._chipPickerQuery.textContent = this._chipQuery || '…';
+            this._openChipPicker();
+            clearTimeout(this._chipDebounce);
+            this._chipDebounce = setTimeout(() => this._fetchChipResults(this._chipQuery), 200);
+        } else {
+            this._closeChipPicker();
+        }
+    },
+
+    _openChipPicker() {
+        if (!this._chipPicker) return;
+        this._chipPicker.classList.add('open');
+        this._chipPickerOpen = true;
+    },
+
+    _closeChipPicker() {
+        if (!this._chipPicker) return;
+        this._chipPicker.classList.remove('open');
+        this._chipPickerOpen = false;
+        this._chipQuery = '';
+    },
+
+    async _fetchChipResults(query) {
+        if (!this._chipPickerList) return;
+        const path = window.Explorer?.currentPath || '';
+        try {
+            const params = new URLSearchParams({ q: query || ' ', path });
+            const res = await fetch(`/api/files/search?${params}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            this._renderChipResults(data.items || []);
+        } catch { /* silent */ }
+    },
+
+    _renderChipResults(files) {
+        if (!this._chipPickerList) return;
+        this._chipPickerList.innerHTML = '';
+
+        const filtered = files.filter(f => !f.is_dir).slice(0, 10);
+        if (filtered.length === 0) {
+            this._chipPickerList.innerHTML =
+                '<div class="chips-picker-empty">Sin resultados</div>';
+            return;
+        }
+
+        filtered.forEach((f, i) => {
+            const item = document.createElement('div');
+            item.className = 'chips-picker-item' + (i === 0 ? ' active' : '');
+            const icon = this._fileIcon(f.name);
+            const short = f.path.replace(window.Explorer?.currentPath || '', '').replace(/^\//, '');
+            item.innerHTML = `<span class="chips-picker-icon">${icon}</span>
+                <span class="chips-picker-name">${Utils.escapeHtml(f.name)}</span>
+                <span class="chips-picker-path">${Utils.escapeHtml(short)}</span>`;
+            item.addEventListener('mousedown', (e) => {
+                e.preventDefault(); // keep textarea focus
+                this._selectChip({ path: f.path, name: f.name });
+            });
+            this._chipPickerList.appendChild(item);
+        });
+    },
+
+    _navigateChipPicker(dir) {
+        const items = [...(this._chipPickerList?.querySelectorAll('.chips-picker-item') || [])];
+        if (!items.length) return;
+        const cur = items.findIndex(el => el.classList.contains('active'));
+        const next = Math.max(0, Math.min(items.length - 1, cur + dir));
+        items.forEach(el => el.classList.remove('active'));
+        items[next].classList.add('active');
+        items[next].scrollIntoView({ block: 'nearest' });
+    },
+
+    /** Commit chip selection: replace @query in textarea, add chip pill. */
+    _selectChip(file) {
+        // Deduplicate
+        if (this.contextChips.some(c => c.path === file.path)) {
+            this._closeChipPicker();
+            this._removeAtQuery();
+            return;
+        }
+
+        this._removeAtQuery();
+        this._closeChipPicker();
+        this.contextChips.push(file);
+        this._renderChips();
+    },
+
+    /** Remove the @query text from the textarea. */
+    _removeAtQuery() {
+        const val   = this.inputEl.value;
+        const caret = this.inputEl.selectionStart;
+        const before = val.slice(0, caret);
+        const replaced = before.replace(/@([^\s@]*)$/, '');
+        this.inputEl.value = replaced + val.slice(caret);
+        const pos = replaced.length;
+        this.inputEl.setSelectionRange(pos, pos);
+        this.inputEl.dispatchEvent(new Event('input'));
+    },
+
+    _renderChips() {
+        if (!this._chipsList || !this._chipsBar) return;
+        this._chipsList.innerHTML = '';
+
+        if (this.contextChips.length === 0) {
+            this._chipsBar.hidden = true;
+            return;
+        }
+        this._chipsBar.hidden = false;
+
+        this.contextChips.forEach((chip, idx) => {
+            const el = document.createElement('div');
+            el.className = 'context-chip';
+            el.innerHTML = `
+                <span class="context-chip-icon">${this._fileIcon(chip.name)}</span>
+                <span class="context-chip-name" title="${Utils.escapeHtml(chip.path)}">${Utils.escapeHtml(chip.name)}</span>
+                <button type="button" class="context-chip-remove" aria-label="Quitar">×</button>
+            `;
+            el.querySelector('.context-chip-remove').addEventListener('click', () => {
+                this.contextChips.splice(idx, 1);
+                this._renderChips();
+            });
+            this._chipsList.appendChild(el);
+        });
+    },
+
+    /** Fetch chip file contents and merge into attachments before sending. */
+    async _resolveChipsToAttachments() {
+        if (!this.contextChips.length) return [];
+        const MAX = 10 * 1024 * 1024; // 10 MB per file
+
+        const results = [];
+        const seen = new Set();
+        for (const chip of this.contextChips) {
+            if (seen.has(chip.path)) continue;
+            seen.add(chip.path);
+            try {
+                const params = new URLSearchParams({ path: chip.path });
+                const res = await fetch(`/api/file-content?${params}`);
+                if (!res.ok) continue;
+                const data = await res.json();
+                const content = data.content || '';
+                if (content.length > MAX) {
+                    Utils.showToast(`${chip.name} supera 10 MB, se truncará`, 'warning');
+                }
+                results.push({ name: chip.name, content: content.slice(0, MAX), size: content.length });
+            } catch {
+                Utils.showToast(`No se pudo leer ${chip.name}`, 'error');
+            }
+        }
+        return results;
+    },
+
+    _clearChips() {
+        this.contextChips = [];
+        this._renderChips();
+        this._closeChipPicker();
+    },
+
+    _fileIcon(name) {
+        const ext = name.split('.').pop().toLowerCase();
+        const map = { py:'🐍', js:'📜', ts:'📘', json:'📋', md:'📝', txt:'📄',
+                      css:'🎨', html:'🌐', sh:'⚙️', yaml:'⚙️', yml:'⚙️',
+                      rs:'🦀', go:'🐹', java:'☕', cpp:'⚙️', c:'⚙️', rb:'💎' };
+        return map[ext] || '📄';
     },
 
 };

@@ -985,6 +985,20 @@
                         <!-- Main input box (border wraps textarea + inline footer) -->
                         <div class="input-wrapper" id="input-wrapper">
                             <div class="attachments-preview" id="attachments-preview"></div>
+                            <!-- Context chips (@ mentions) -->
+                            <div class="context-chips-bar" id="context-chips-bar" hidden>
+                                <div class="context-chips-list" id="context-chips-list"></div>
+                            </div>
+                            <!-- @ file picker dropdown -->
+                            <div class="chips-picker" id="chips-picker">
+                                <div class="chips-picker-search">
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                        <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                                    </svg>
+                                    <span class="chips-picker-query" id="chips-picker-query"></span>
+                                </div>
+                                <div class="chips-picker-list" id="chips-picker-list"></div>
+                            </div>
                             <textarea
                                 id="message-input"
                                 class="message-input"
