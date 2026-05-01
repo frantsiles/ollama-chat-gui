@@ -246,6 +246,35 @@
                     <div class="panel-title">Configuración</div>
                     <div class="panel-body">
 
+                        <!-- Provider -->
+                        <div class="panel-section">
+                            <div class="panel-section-header" data-target="cfg-provider">
+                                <span>Provider LLM</span>
+                                <svg class="panel-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"/>
+                                </svg>
+                            </div>
+                            <div class="panel-section-body" id="cfg-provider">
+                                <select id="llm-provider-select" class="select">
+                                    <option value="ollama">Ollama (local)</option>
+                                    <option value="lmstudio">LM Studio (local)</option>
+                                    <option value="openai">OpenAI / Groq / Copilot</option>
+                                    <option value="anthropic">Anthropic (Claude)</option>
+                                </select>
+                                <div class="cfg-steps-hint" style="margin-top:6px">
+                                    API keys via variables de entorno:<br>
+                                    <code>OPENAI_API_KEY</code>, <code>ANTHROPIC_API_KEY</code>
+                                </div>
+                                <div id="cfg-provider-url-row" class="cfg-steps-row" style="margin-top:8px">
+                                    <label for="llm-base-url" class="cfg-steps-label" style="width:100%">URL base (opcional)</label>
+                                    <input type="text" id="llm-base-url" class="cfg-steps-input"
+                                           style="width:100%; font-size:0.78rem"
+                                           placeholder="http://localhost:11434"
+                                           title="Deja vacío para usar el valor por defecto del provider">
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Model -->
                         <div class="panel-section">
                             <div class="panel-section-header" data-target="cfg-model">

@@ -1,4 +1,4 @@
-"""Configuración centralizada para Ollama Chat GUI."""
+"""Configuración centralizada para open-agent-ia."""
 
 from __future__ import annotations
 
@@ -7,11 +7,26 @@ import re
 from pathlib import Path as _Path
 
 # =============================================================================
-# Ollama Configuration
+# LLM Provider Configuration
 # =============================================================================
+# Provider activo: "ollama" | "lmstudio" | "openai" | "anthropic"
+LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "ollama")
+
+# Ollama
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_DEFAULT_MODEL = os.getenv("OLLAMA_DEFAULT_MODEL", "")
 OLLAMA_TIMEOUT = int(os.getenv("OLLAMA_TIMEOUT", "300"))
+
+# LM Studio (OpenAI-compatible local)
+LM_STUDIO_BASE_URL = os.getenv("LM_STUDIO_BASE_URL", "http://localhost:1234/v1")
+
+# OpenAI / Groq / Copilot (OpenAI-compatible cloud)
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+
+# Anthropic Claude
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 # =============================================================================
 # Workspace Configuration
@@ -74,7 +89,7 @@ MAX_ATTACHMENT_CHARS_PER_FILE = 4000
 PERSISTENCE_DB_PATH = _Path(
     os.getenv(
         "CHAT_DB_PATH",
-        os.path.join(os.path.expanduser("~"), ".local", "share", "ollama-chat-gui", "sessions.db"),
+        os.path.join(os.path.expanduser("~"), ".local", "share", "open-agent-ia", "sessions.db"),
     )
 )
 
@@ -101,7 +116,7 @@ EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
 CHROMA_DB_PATH = _Path(
     os.getenv(
         "CHROMA_DB_PATH",
-        os.path.join(os.path.expanduser("~"), ".local", "share", "ollama-chat-gui", "chroma"),
+        os.path.join(os.path.expanduser("~"), ".local", "share", "open-agent-ia", "chroma"),
     )
 )
 # Puntuación mínima cosine (0-1) para emitir sugerencias proactivas

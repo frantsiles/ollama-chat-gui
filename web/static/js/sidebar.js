@@ -19,6 +19,8 @@ const Sidebar = {
         this.tempValue       = document.getElementById('temp-value');
         this.workspacePath   = document.getElementById('workspace-path');
         this.approvalLevel   = document.getElementById('approval-level');
+        this.llmProviderSelect = document.getElementById('llm-provider-select');
+        this.llmBaseUrl        = document.getElementById('llm-base-url');
         this.maxAgentSteps     = document.getElementById('max-agent-steps');
         this.stepsValue        = document.getElementById('steps-value');
         this.agentTaskTimeout  = document.getElementById('agent-task-timeout');
@@ -94,6 +96,25 @@ const Sidebar = {
         this.approvalLevel.addEventListener('change', (e) => {
             this.updateConfig({ approval_level: e.target.value });
         });
+
+        // LLM Provider
+        if (this.llmProviderSelect) {
+            this.llmProviderSelect.addEventListener('change', (e) => {
+                const provider = e.target.value;
+                this._saveSettings({ llmProvider: provider });
+                this.updateConfig({ llm_provider: provider });
+                // Recargar lista de modelos para el nuevo provider
+                this.loadModels();
+            });
+        }
+        if (this.llmBaseUrl) {
+            this.llmBaseUrl.addEventListener('change', (e) => {
+                const url = e.target.value.trim();
+                this._saveSettings({ llmBaseUrl: url });
+                this.updateConfig({ llm_base_url: url });
+                this.loadModels();
+            });
+        }
 
         // Max agent steps
         this.maxAgentSteps.addEventListener('input', (e) => {
@@ -217,7 +238,13 @@ const Sidebar = {
     async loadModels() {
         Utils.log('SIDEBAR', 'Loading models...');
         try {
-            const response = await fetch('/api/models');
+            const provider = this.llmProviderSelect ? this.llmProviderSelect.value : '';
+            const baseUrl  = this.llmBaseUrl ? this.llmBaseUrl.value.trim() : '';
+            const params = new URLSearchParams();
+            if (provider) params.set('provider', provider);
+            if (baseUrl)  params.set('base_url', baseUrl);
+            const qs = params.toString() ? `?${params}` : '';
+            const response = await fetch(`/api/models${qs}`);
             const data = await response.json();
 
             this.modelSelect.innerHTML = '';
@@ -284,6 +311,12 @@ const Sidebar = {
         if (settings.approvalLevel) {
             this.approvalLevel.value = settings.approvalLevel;
         }
+        if (settings.llmProvider && this.llmProviderSelect) {
+            this.llmProviderSelect.value = settings.llmProvider;
+        }
+        if (settings.llmBaseUrl !== undefined && this.llmBaseUrl) {
+            this.llmBaseUrl.value = settings.llmBaseUrl;
+        }
         if (settings.maxAgentSteps !== undefined) {
             const val = settings.maxAgentSteps;
             this.maxAgentSteps.value = val;
@@ -343,6 +376,14 @@ const Sidebar = {
                     this.pythonSandboxTimeout.value = config.python_sandbox_timeout;
                     if (this.pythonTimeoutValue) this.pythonTimeoutValue.textContent = config.python_sandbox_timeout;
                     this._saveSettings({ pythonSandboxTimeout: config.python_sandbox_timeout });
+                }
+                if (config.llm_provider && this.llmProviderSelect) {
+                    this.llmProviderSelect.value = config.llm_provider;
+                    this._saveSettings({ llmProvider: config.llm_provider });
+                }
+                if (config.llm_base_url !== undefined && this.llmBaseUrl) {
+                    this.llmBaseUrl.value = config.llm_base_url;
+                    this._saveSettings({ llmBaseUrl: config.llm_base_url });
                 }
                 if (config.workspace_root) {
                     this._saveSettings({ workspacePath: config.workspace_root });

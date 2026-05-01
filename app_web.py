@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Ollama Chat GUI - Web UI Entry Point
+open-agent-ia - Web UI Entry Point
 
 Run with: python app_web.py
 Or: uvicorn web.server:app --reload --port 8000
@@ -9,7 +9,7 @@ Or: uvicorn web.server:app --reload --port 8000
 import uvicorn
 
 if __name__ == "__main__":
-    print("🦙 Starting Ollama Chat GUI...")
+    print("🤖 Starting open-agent-ia...")
     print("📍 Open http://localhost:8000 in your browser")
     print("📖 API docs at http://localhost:8000/docs")
     print()

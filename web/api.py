@@ -14,7 +14,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from config import ApprovalLevel, OLLAMA_BASE_URL, OperationMode
-from llm.client import OllamaClient, OllamaClientError
+from llm.client import OllamaClient, OllamaClientError, create_client
+from llm.base import LLMClientError
 from web.state import SessionManager
 from web.api_rag import router as rag_router
 from web.api_memory import router as memory_router
@@ -37,6 +38,8 @@ class ConfigUpdate(BaseModel):
     temperature: Optional[float] = None
     workspace_root: Optional[str] = None
     approval_level: Optional[str] = None
+    llm_provider: Optional[str] = None
+    llm_base_url: Optional[str] = None
     max_agent_steps: Optional[int] = None
     agent_task_timeout: Optional[int] = None
     python_sandbox_timeout: Optional[int] = None
@@ -59,16 +62,18 @@ class ApprovalAction(BaseModel):
 # =============================================================================
 
 @router.get("/models")
-async def get_models() -> Dict[str, Any]:
-    """Obtiene la lista de modelos disponibles."""
+async def get_models(provider: Optional[str] = None, base_url: Optional[str] = None) -> Dict[str, Any]:
+    """Obtiene la lista de modelos disponibles para el provider indicado."""
     try:
-        client = OllamaClient(base_url=OLLAMA_BASE_URL)
+        client = create_client(provider=provider, base_url=base_url or None)
         models = client.list_models()
-        
-        # Obtener capacidades y clasificar modelos (locales primero)
+
         model_list = []
         for model in models:
-            caps = client.get_model_capabilities(model)
+            try:
+                caps = client.get_model_capabilities(model)
+            except Exception:
+                caps = set()
             is_cloud = ":cloud" in model.lower() or model.lower().endswith("-cloud")
             model_list.append({
                 "name": model,
@@ -76,22 +81,20 @@ async def get_models() -> Dict[str, Any]:
                 "cloud": is_cloud,
             })
 
-        # Modelos locales primero, cloud al final
         model_list.sort(key=lambda m: (1 if m["cloud"] else 0, m["name"]))
-
         return {"models": model_list}
-    except OllamaClientError as e:
+    except LLMClientError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
 
 @router.get("/models/{model_name}/info")
-async def get_model_info(model_name: str) -> Dict[str, Any]:
+async def get_model_info(model_name: str, provider: Optional[str] = None) -> Dict[str, Any]:
     """Obtiene información detallada de un modelo."""
     try:
-        client = OllamaClient(base_url=OLLAMA_BASE_URL)
+        client = create_client(provider=provider)
         info = client.get_model_info(model_name)
         return {"model": model_name, "info": info}
-    except OllamaClientError as e:
+    except LLMClientError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
 
@@ -167,6 +170,8 @@ async def get_config(session_id: str) -> Dict[str, Any]:
         "workspace_root": session.workspace_root,
         "current_cwd": session.current_cwd,
         "approval_level": session.approval_level,
+        "llm_provider": session.llm_provider,
+        "llm_base_url": session.llm_base_url,
         "max_agent_steps": session.max_agent_steps,
         "agent_task_timeout": session.agent_task_timeout,
         "python_sandbox_timeout": session.python_sandbox_timeout,
@@ -198,6 +203,11 @@ async def update_config(session_id: str, data: ConfigUpdate) -> Dict[str, Any]:
     if data.approval_level is not None:
         if data.approval_level in (ApprovalLevel.NONE, ApprovalLevel.WRITE_ONLY, ApprovalLevel.ALL):
             session.approval_level = data.approval_level
+    _valid_providers = {"ollama", "lmstudio", "openai", "anthropic", "copilot", "groq"}
+    if data.llm_provider is not None and data.llm_provider in _valid_providers:
+        session.llm_provider = data.llm_provider
+    if data.llm_base_url is not None:
+        session.llm_base_url = data.llm_base_url.strip()
     if data.max_agent_steps is not None:
         session.max_agent_steps = max(1, min(500, data.max_agent_steps))
     if data.agent_task_timeout is not None:

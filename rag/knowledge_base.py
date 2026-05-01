@@ -234,7 +234,7 @@ class KnowledgeBase:
             resp = http_requests.get(
                 url,
                 timeout=_HTTP_TIMEOUT,
-                headers={"User-Agent": "ollama-chat-gui/2.0 (knowledge-base-ingester)"},
+                headers={"User-Agent": "open-agent-ia/2.0 (knowledge-base-ingester)"},
             )
             resp.raise_for_status()
             content_type = resp.headers.get("content-type", "")

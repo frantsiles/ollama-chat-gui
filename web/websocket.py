@@ -22,7 +22,7 @@ from config import (
 from core.agent import Agent, AgentResponse
 from core.models import Plan, PlanStatus, ToolCall
 from core.planner import PlanManager
-from llm.client import OllamaClient, OllamaClientError
+from llm.client import OllamaClient, OllamaClientError, create_client
 from web.state import Session, SessionManager
 from web.metrics import MetricsCollector
 
@@ -179,7 +179,12 @@ async def handle_chat_message(
             return cancel_flag.is_set()
 
         # Crear cliente y agente
-        client = OllamaClient(base_url=OLLAMA_BASE_URL)
+        from llm.base import LLMClientError as _LLMErr
+        try:
+            client = create_client(provider=session.llm_provider, base_url=session.llm_base_url or None)
+        except _LLMErr as _e:
+            await websocket.send_json({"type": "error", "message": str(_e)})
+            return
         agent = Agent(
             client=client,
             model=session.model,
@@ -471,7 +476,12 @@ async def handle_approval(
         return
     
     # Crear agente y continuar (heredando contexto de la sesión)
-    client = OllamaClient(base_url=OLLAMA_BASE_URL)
+    from llm.base import LLMClientError as _LLMErr
+    try:
+        client = create_client(provider=session.llm_provider, base_url=session.llm_base_url or None)
+    except _LLMErr as _e:
+        await websocket.send_json({"type": "error", "message": str(_e)})
+        return
     agent = Agent(
         client=client,
         model=session.model,
@@ -559,7 +569,12 @@ async def _run_plan_auto(
     Ejecuta todos los pasos del plan de forma autónoma y hace streaming
     de cada paso completado via WebSocket.
     """
-    client = OllamaClient(base_url=OLLAMA_BASE_URL)
+    from llm.base import LLMClientError as _LLMErr
+    try:
+        client = create_client(provider=session.llm_provider, base_url=session.llm_base_url or None)
+    except _LLMErr as _e:
+        await websocket.send_json({"type": "error", "message": str(_e)})
+        return
     agent = Agent(
         client=client,
         model=session.model,
@@ -719,8 +734,13 @@ async def handle_stream_chat(
     session.add_message("user", content)
     
     # Crear cliente
-    client = OllamaClient(base_url=OLLAMA_BASE_URL)
-    
+    from llm.base import LLMClientError as _LLMErr
+    try:
+        client = create_client(provider=session.llm_provider, base_url=session.llm_base_url or None)
+    except _LLMErr as _e:
+        await websocket.send_json({"type": "error", "message": str(_e)})
+        return
+
     # Preparar mensajes
     messages = [{"role": "user", "content": content}]
     for msg in session.conversation.messages[:-1]:  # Excluir el último que acabamos de agregar

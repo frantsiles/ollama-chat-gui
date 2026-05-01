@@ -12,6 +12,7 @@ from config import (
     AGENT_TASK_TIMEOUT,
     ApprovalLevel,
     DEFAULT_WORKSPACE_ROOT,
+    LLM_PROVIDER,
     MAX_AGENT_STEPS,
     OLLAMA_DEFAULT_MODEL,
     OperationMode,
@@ -32,6 +33,8 @@ class Session:
     workspace_root: str = DEFAULT_WORKSPACE_ROOT
     current_cwd: str = DEFAULT_WORKSPACE_ROOT
     approval_level: str = ApprovalLevel.WRITE_ONLY
+    llm_provider: str = LLM_PROVIDER
+    llm_base_url: str = ""
     max_agent_steps: int = MAX_AGENT_STEPS
     agent_task_timeout: int = AGENT_TASK_TIMEOUT
     python_sandbox_timeout: int = PYTHON_SANDBOX_TIMEOUT_SECONDS
@@ -58,6 +61,8 @@ class Session:
             "workspace_root": self.workspace_root,
             "current_cwd": self.current_cwd,
             "approval_level": self.approval_level,
+            "llm_provider": self.llm_provider,
+            "llm_base_url": self.llm_base_url,
             "max_agent_steps": self.max_agent_steps,
             "agent_task_timeout": self.agent_task_timeout,
             "python_sandbox_timeout": self.python_sandbox_timeout,
@@ -180,6 +185,8 @@ class SessionManager:
             "workspace_root": session.workspace_root,
             "current_cwd": session.current_cwd,
             "approval_level": session.approval_level,
+            "llm_provider": session.llm_provider,
+            "llm_base_url": session.llm_base_url,
             "max_agent_steps": session.max_agent_steps,
             "agent_task_timeout": session.agent_task_timeout,
             "python_sandbox_timeout": session.python_sandbox_timeout,
@@ -241,6 +248,8 @@ class SessionManager:
             workspace_root=meta.get("workspace_root", DEFAULT_WORKSPACE_ROOT),
             current_cwd=meta.get("current_cwd", DEFAULT_WORKSPACE_ROOT),
             approval_level=meta.get("approval_level", ApprovalLevel.WRITE_ONLY),
+            llm_provider=meta.get("llm_provider", LLM_PROVIDER),
+            llm_base_url=meta.get("llm_base_url", ""),
             max_agent_steps=int(meta.get("max_agent_steps", MAX_AGENT_STEPS)),
             agent_task_timeout=int(meta.get("agent_task_timeout", AGENT_TASK_TIMEOUT)),
             python_sandbox_timeout=int(meta.get("python_sandbox_timeout", PYTHON_SANDBOX_TIMEOUT_SECONDS)),

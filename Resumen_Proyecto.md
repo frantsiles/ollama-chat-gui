@@ -1,4 +1,4 @@
-# Resumen del Proyecto: Ollama Chat GUI
+# Resumen del Proyecto: open-agent-ia
 
 ## Descripción
 

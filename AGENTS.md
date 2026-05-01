@@ -67,7 +67,7 @@ python -m py_compile core/*.py llm/*.py tools/*.py security/*.py rag/*.py ui/*.p
 ## Architecture map
 
 ```
-ollama-chat-gui/
+open-agent-ia/
 ├── app_web.py              # Entry point: Web UI (FastAPI, recommended)
 ├── app_new.py              # Entry point: Streamlit UI (legacy)
 ├── app.py                  # Legacy monolith (deprecated)

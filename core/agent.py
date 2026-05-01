@@ -24,7 +24,8 @@ from core.models import (
     ToolCall,
     ToolResult,
 )
-from llm.client import OllamaClient, OllamaClientError
+from llm.base import LLMClientError, LLMProvider
+OllamaClientError = LLMClientError  # alias de compatibilidad
 from security.approval import ApprovalManager
 from tools.registry import ToolRegistry
 
@@ -54,7 +55,7 @@ class Agent:
     
     def __init__(
         self,
-        client: OllamaClient,
+        client: LLMProvider,
         model: str,
         workspace_root: Path,
         current_cwd: Optional[Path] = None,

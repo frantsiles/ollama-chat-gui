@@ -1552,10 +1552,10 @@ def build_user_message(
 
 
 def main() -> None:
-    st.set_page_config(page_title="Ollama Chat GUI", page_icon="💬", layout="wide")
+    st.set_page_config(page_title="open-agent-ia", page_icon="💬", layout="wide")
     init_state()
 
-    st.title("Ollama Chat GUI")
+    st.title("open-agent-ia")
     st.caption("Cliente gráfico local para chatear con modelos de Ollama.")
 
     with st.sidebar:

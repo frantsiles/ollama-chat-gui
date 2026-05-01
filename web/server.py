@@ -19,7 +19,7 @@ from web.websocket import websocket_handler
 # =============================================================================
 
 app = FastAPI(
-    title="Ollama Chat GUI",
+    title="open-agent-ia",
     description="AI Agent with Chat, Agent, and Plan modes",
     version="2.0.0",
 )
@@ -63,7 +63,7 @@ async def root():
     index_path = STATIC_DIR / "index.html"
     if index_path.exists():
         return FileResponse(index_path)
-    return {"message": "Ollama Chat GUI API", "docs": "/docs"}
+    return {"message": "open-agent-ia API", "docs": "/docs"}
 
 
 # =============================================================================
@@ -78,7 +78,7 @@ async def startup_event():
     from tools.mcp_manager import MCPManager
 
     SessionManager.init_persistence(PERSISTENCE_DB_PATH)
-    print("Ollama Chat GUI started")
+    print("open-agent-ia started")
     print(f"Static files: {STATIC_DIR}")
     print(f"Persistence DB: {PERSISTENCE_DB_PATH}")
 
@@ -99,7 +99,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Evento de cierre."""
-    print("👋 Ollama Chat GUI shutting down")
+    print("👋 open-agent-ia shutting down")
 
 # =============================================================================
 # Server Startup Logic

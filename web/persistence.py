@@ -76,7 +76,7 @@ class PersistenceDB:
     Gestor de persistencia SQLite para sesiones y mensajes.
 
     Uso típico:
-        db = PersistenceDB(Path("~/.local/share/ollama-chat-gui/sessions.db"))
+        db = PersistenceDB(Path("~/.local/share/open-agent-ia/sessions.db"))
         db.save_session(id, meta_dict, message_dicts)
         result = db.load_session(id)  # -> (meta_dict, message_dicts) | None
     """
