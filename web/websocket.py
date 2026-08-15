@@ -5,24 +5,23 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re as _re
 from pathlib import Path
 from typing import Any, Dict
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 from config import (
-    AGENT_TASK_TIMEOUT,
     MAX_ATTACHMENT_CHARS_PER_FILE,
     MAX_ATTACHMENT_CHARS_TOTAL,
     MAX_INPUT_CHARS,
     MEMORY_ENABLED,
-    OLLAMA_BASE_URL,
     OperationMode,
 )
 from core.agent import Agent, AgentResponse
 from core.models import Plan, PlanStatus, ToolCall
 from core.planner import PlanManager
-from llm.client import OllamaClient, OllamaClientError, create_client
+from llm.client import OllamaClientError, create_client
 from web.state import Session, SessionManager
 from web.metrics import MetricsCollector
 
@@ -104,7 +103,6 @@ async def _build_full_content(
     return f"{content}\n\n---\nArchivos adjuntos:\n{attachment_ctx}"
 
 
-import re as _re
 _AFFIRMATIVE_RE = _re.compile(
     r"^(s[íi]|yes|ok|okay|dale|claro|adelante|procede|hazlo|"
     r"ejecuta|confirmo?|confirmar|apruebo?|aprobar|approve|"
@@ -818,7 +816,7 @@ async def _git_status_data(watch_path: str) -> dict:
 async def _file_watcher_task(websocket: WebSocket, watch_path: str, stop_event: asyncio.Event) -> None:
     """Watch *watch_path* and push file_changed + git_status_changed events over *websocket*."""
     try:
-        from watchfiles import awatch, Change
+        from watchfiles import awatch
     except ImportError:
         logger.warning("watchfiles not installed — file watcher disabled")
         return

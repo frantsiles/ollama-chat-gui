@@ -25,9 +25,10 @@ from core.models import (
     ToolResult,
 )
 from llm.base import LLMClientError, LLMProvider
-OllamaClientError = LLMClientError  # alias de compatibilidad
 from security.approval import ApprovalManager
 from tools.registry import ToolRegistry
+
+OllamaClientError = LLMClientError  # alias de compatibilidad
 
 
 @dataclass

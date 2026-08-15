@@ -20,8 +20,8 @@ from fastapi.testclient import TestClient
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from web.api import router, _sanitize_filename, _resolve_safe
-from fastapi import HTTPException
+from web.api import router, _sanitize_filename, _resolve_safe  # noqa: E402
+from fastapi import HTTPException  # noqa: E402
 
 
 # --------------------------------------------------------------------------

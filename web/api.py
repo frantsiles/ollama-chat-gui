@@ -1262,7 +1262,7 @@ async def git_info(path: str = "") -> Dict[str, Any]:
 
     # Stash count
     _, stash_out, _ = await _git(["stash", "list"], str(root))
-    stash_count = len([l for l in stash_out.splitlines() if l])
+    stash_count = len([line for line in stash_out.splitlines() if line])
 
     return {
         "is_git": True,
@@ -1482,7 +1482,7 @@ async def git_generate_commit_msg(body: GitGenerateMsgBody) -> Dict[str, Any]:
         # Keep only the first non-empty line — models often return multiple
         # alternatives or add explanatory text after the commit message.
         first_line = next(
-            (l.strip() for l in message.splitlines() if l.strip()),
+            (line.strip() for line in message.splitlines() if line.strip()),
             message.strip(),
         )
         return {"message": first_line}

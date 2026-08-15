@@ -82,7 +82,7 @@ class Session:
             if msg.role == MessageRole.USER and msg.content.strip():
                 text = msg.content.strip()
                 # Quitar líneas de adjuntos
-                lines = [l for l in text.splitlines() if not l.startswith("---")]
+                lines = [line for line in text.splitlines() if not line.startswith("---")]
                 text = " ".join(lines).strip()
                 return text[:57] + "..." if len(text) > 60 else text
         return ""

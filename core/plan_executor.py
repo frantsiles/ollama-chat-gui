@@ -16,6 +16,7 @@ from __future__ import annotations
 import ast
 import json
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -485,9 +486,6 @@ class PlanExecutor:
             lines = raw.splitlines()
             return "\n".join(lines[1:-1]) if len(lines) > 2 else raw
         return raw
-
-
-from dataclasses import dataclass, field
 
 
 @dataclass

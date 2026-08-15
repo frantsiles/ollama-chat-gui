@@ -17,15 +17,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-_SIMULATION_RE = re.compile(
-    r"simulaci[oó]n\s+de\s+la\s+ejecuci[oó]n|"
-    r"simular[eé]\s+(el\s+)?comando|"
-    r"como\s+si\s+hubiera\s+ejecutado|"
-    r"fingir[eé]\s+ejecutar|"
-    r"ejecuci[oó]n\s+simulada",
-    re.IGNORECASE,
-)
-
 from config import MAX_AGENT_STEPS
 from core.models import (
     AgentState,
@@ -35,6 +26,15 @@ from core.models import (
 )
 from llm.client import OllamaClientError
 from llm.prompts import PromptManager
+
+_SIMULATION_RE = re.compile(
+    r"simulaci[oó]n\s+de\s+la\s+ejecuci[oó]n|"
+    r"simular[eé]\s+(el\s+)?comando|"
+    r"como\s+si\s+hubiera\s+ejecutado|"
+    r"fingir[eé]\s+ejecutar|"
+    r"ejecuci[oó]n\s+simulada",
+    re.IGNORECASE,
+)
 
 
 @dataclass
