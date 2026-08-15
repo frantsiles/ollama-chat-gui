@@ -1,0 +1,96 @@
+/**
+ * Estilos de impresión — usados por Export.exportPDF() (window.print()).
+ * Oculta toda la UI de la app y muestra solo la transcripción del chat.
+ */
+
+.print-only {
+    display: none;
+}
+
+#print-header h1 {
+    margin: 0 0 4px;
+    font-size: 20px;
+}
+
+#print-header p {
+    margin: 0 0 16px;
+    font-size: 12px;
+    color: #555;
+}
+
+@media print {
+    html, body, #app, .main-container, .chat-area, .messages-container {
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    /* El tema oscuro deja fondos/colores por CSS variables en toda la cadena
+       de ancestros — forzar papel blanco y tinta negra en todo el subárbol
+       impreso, no solo en .message-body, o el texto queda negro-sobre-negro. */
+    html, body, #app, .main-container, .chat-area, .messages-container,
+    #messages-container {
+        background: #fff !important;
+    }
+
+    body * {
+        visibility: hidden;
+    }
+
+    #messages-container, #messages-container *,
+    #print-header, #print-header * {
+        visibility: visible;
+        color: #000 !important;
+    }
+
+    #print-header {
+        display: block;
+    }
+
+    #messages-container {
+        position: absolute;
+        inset: 0;
+        padding: 0;
+    }
+
+    .messages {
+        max-width: 100%;
+    }
+
+    .code-copy-btn {
+        display: none !important;
+    }
+
+    .message {
+        page-break-inside: avoid;
+    }
+
+    .message-body,
+    .message-avatar,
+    .message-content,
+    .message-header {
+        background: none !important;
+        box-shadow: none !important;
+    }
+
+    .message-body pre {
+        background: #f4f4f4 !important;
+        color: #111 !important;
+        border: 1px solid #ddd;
+        page-break-inside: avoid;
+        white-space: pre-wrap;
+        word-break: break-word;
+    }
+
+    .message-body code {
+        background: #eee !important;
+        color: #111 !important;
+    }
+
+    a {
+        text-decoration: underline;
+    }
+
+    @page {
+        margin: 1.5cm;
+    }
+}

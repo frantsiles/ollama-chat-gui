@@ -10,12 +10,13 @@ from typing import Any, Dict, Optional
 import json
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, File as FastAPIFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
 from config import ApprovalLevel, OLLAMA_BASE_URL, OperationMode
 from llm.client import OllamaClient, OllamaClientError, create_client
 from llm.base import LLMClientError
+from web.export import build_markdown_export, safe_export_filename
 from web.state import SessionManager
 from web.api_rag import router as rag_router
 from web.api_memory import router as memory_router
@@ -311,11 +312,29 @@ async def get_conversation_messages(session_id: str) -> Dict[str, Any]:
 
 
 @router.get("/conversations/{session_id}/export")
-async def export_conversation(session_id: str) -> Dict[str, Any]:
-    """Exporta una conversación completa como JSON serializable."""
+async def export_conversation(session_id: str, format: str = "json") -> Any:
+    """Exporta una conversación completa. `format`: 'json' (default) o 'md'."""
     session = SessionManager.get(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Conversation not found")
+
+    messages = session.get_messages_for_display()
+
+    if format == "md":
+        content = build_markdown_export(
+            title=session.title,
+            model=session.model,
+            mode=session.mode,
+            created_at=session.created_at.isoformat(),
+            messages=messages,
+        )
+        filename = safe_export_filename(session.title, session_id)
+        return Response(
+            content=content,
+            media_type="text/markdown; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
     return {
         "version": 1,
         "session_id": session_id,
@@ -324,7 +343,7 @@ async def export_conversation(session_id: str) -> Dict[str, Any]:
         "mode": session.mode,
         "temperature": session.temperature,
         "created_at": session.created_at.isoformat(),
-        "messages": session.get_messages_for_display(),
+        "messages": messages,
     }
 
 

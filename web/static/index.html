@@ -18,6 +18,7 @@
     <link rel="stylesheet" href="/static/css/mcp.css">
     <link rel="stylesheet" href="/static/css/explorer.css">
     <link rel="stylesheet" href="/static/css/git.css">
+    <link rel="stylesheet" href="/static/css/print.css">
     <!-- Highlight.js CSS & JS are loaded lazily on first FileViewer.open() -->
 </head>
 <body>
@@ -83,6 +84,20 @@
                         <path d="M12 5v14M5 12h14"/>
                     </svg>
                 </button>
+                <div class="input-selector-wrap header-export-wrap" id="export-wrap">
+                    <button id="export-btn" class="icon-btn" aria-haspopup="true" aria-expanded="false"
+                            aria-label="Exportar chat" title="Exportar chat">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="7 10 12 15 17 10"/>
+                            <line x1="12" y1="15" x2="12" y2="3"/>
+                        </svg>
+                    </button>
+                    <div class="input-selector-menu header-dropdown-menu" id="export-menu" role="menu">
+                        <button type="button" class="selector-menu-item" data-format="md" role="menuitem">Markdown (.md)</button>
+                        <button type="button" class="selector-menu-item" data-format="pdf" role="menuitem">PDF (imprimir)</button>
+                    </div>
+                </div>
                 <button id="theme-toggle" class="icon-btn" aria-label="Toggle theme">
                     <svg class="sun-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="5"/>
@@ -1216,6 +1231,7 @@
     <script src="/static/js/modes.js"></script>
     <script src="/static/js/skills.js"></script>
     <script src="/static/js/history.js"></script>
+    <script src="/static/js/export.js"></script>
     <script src="/static/js/shortcuts.js"></script>
     <script src="/static/js/plan.js"></script>
     <script src="/static/js/mcp.js"></script>

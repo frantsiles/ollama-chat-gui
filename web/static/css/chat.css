@@ -541,6 +541,14 @@
     display: block;
 }
 
+/* Variante para dropdowns anclados en el header (abren hacia abajo, a la derecha) */
+.header-dropdown-menu {
+    top: calc(100% + 6px);
+    bottom: auto;
+    left: auto;
+    right: 0;
+}
+
 @keyframes dropUp {
     from { opacity: 0; transform: translateY(4px); }
     to   { opacity: 1; transform: translateY(0); }
