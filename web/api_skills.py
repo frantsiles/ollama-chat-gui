@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -40,12 +40,12 @@ class SkillUpdate(BaseModel):
 # ------------------------------------------------------------------
 
 @router.get("")
-async def list_skills() -> Dict[str, Any]:
+async def list_skills() -> dict[str, Any]:
     return {"skills": [s.to_dict() for s in _manager().list_skills()]}
 
 
 @router.post("", status_code=201)
-async def create_skill(data: SkillCreate) -> Dict[str, Any]:
+async def create_skill(data: SkillCreate) -> dict[str, Any]:
     mgr = _manager()
     if mgr.get_skill(data.name):
         raise HTTPException(status_code=409, detail=f"Skill '{data.name}' ya existe")
@@ -54,7 +54,7 @@ async def create_skill(data: SkillCreate) -> Dict[str, Any]:
 
 
 @router.put("/{name}")
-async def update_skill(name: str, data: SkillUpdate) -> Dict[str, Any]:
+async def update_skill(name: str, data: SkillUpdate) -> dict[str, Any]:
     skill = _manager().update_skill(name, data.description, data.content)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill '{name}' no encontrado")
@@ -62,14 +62,14 @@ async def update_skill(name: str, data: SkillUpdate) -> Dict[str, Any]:
 
 
 @router.delete("/{name}")
-async def delete_skill(name: str) -> Dict[str, str]:
+async def delete_skill(name: str) -> dict[str, str]:
     if not _manager().delete_skill(name):
         raise HTTPException(status_code=404, detail=f"Skill '{name}' no encontrado")
     return {"status": "deleted"}
 
 
 @router.get("/{name}")
-async def get_skill(name: str) -> Dict[str, Any]:
+async def get_skill(name: str) -> dict[str, Any]:
     skill = _manager().get_skill(name)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Skill '{name}' no encontrado")

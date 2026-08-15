@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 try:
     from mcp import ClientSession, StdioServerParameters
-    from mcp.client.stdio import stdio_client
     from mcp.client.sse import sse_client
+    from mcp.client.stdio import stdio_client
     MCP_AVAILABLE = True
 except ImportError:
     MCP_AVAILABLE = False
@@ -19,15 +19,15 @@ class MCPServerConfig:
     """Configuración de un servidor MCP."""
     name: str
     type: str  # "stdio" | "sse"
-    command: Optional[str] = None        # Para tipo stdio: ejecutable
-    args: List[str] = field(default_factory=list)
-    env: Dict[str, str] = field(default_factory=dict)
-    url: Optional[str] = None            # Para tipo sse: endpoint SSE
+    command: str | None = None        # Para tipo stdio: ejecutable
+    args: list[str] = field(default_factory=list)
+    env: dict[str, str] = field(default_factory=dict)
+    url: str | None = None            # Para tipo sse: endpoint SSE
     enabled: bool = True
     description: str = ""
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "MCPServerConfig":
+    def from_dict(cls, data: dict[str, Any]) -> MCPServerConfig:
         return cls(
             name=data["name"],
             type=data.get("type", "stdio"),
@@ -39,7 +39,7 @@ class MCPServerConfig:
             description=data.get("description", ""),
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "type": self.type,
@@ -58,14 +58,14 @@ class MCPToolDefinition:
     name: str
     description: str
     server_name: str
-    input_schema: Dict[str, Any] = field(default_factory=dict)
+    input_schema: dict[str, Any] = field(default_factory=dict)
 
     @property
     def full_name(self) -> str:
         """Nombre único con prefijo del servidor: 'servidor__herramienta'."""
         return f"{self.server_name}__{self.name}"
 
-    def to_ollama_tool(self) -> Dict[str, Any]:
+    def to_ollama_tool(self) -> dict[str, Any]:
         """Convierte al formato de Ollama function calling."""
         schema = self.input_schema or {"type": "object", "properties": {}}
         return {
@@ -77,7 +77,7 @@ class MCPToolDefinition:
             },
         }
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "full_name": self.full_name,
@@ -98,14 +98,14 @@ class MCPClient:
     def __init__(self, config: MCPServerConfig) -> None:
         self.config = config
 
-    async def list_tools(self) -> List[MCPToolDefinition]:
+    async def list_tools(self) -> list[MCPToolDefinition]:
         """Conecta al servidor y retorna las herramientas disponibles."""
         if not MCP_AVAILABLE:
             raise RuntimeError(
                 "El paquete 'mcp' no está instalado. Ejecuta: pip install mcp"
             )
 
-        tools: List[MCPToolDefinition] = []
+        tools: list[MCPToolDefinition] = []
 
         if self.config.type == "stdio":
             params = StdioServerParameters(
@@ -144,7 +144,7 @@ class MCPClient:
 
         return tools
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> str:
+    async def call_tool(self, tool_name: str, arguments: dict[str, Any]) -> str:
         """Ejecuta una herramienta en el servidor y retorna el resultado como texto."""
         if not MCP_AVAILABLE:
             raise RuntimeError("El paquete 'mcp' no está instalado.")

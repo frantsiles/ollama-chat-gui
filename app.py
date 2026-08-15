@@ -4,14 +4,13 @@ import os
 import re
 import shlex
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import streamlit as st
 
 from ollama_client import OllamaClient, OllamaClientError
-
 
 DEFAULT_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 DEFAULT_MODEL = os.getenv("OLLAMA_DEFAULT_MODEL", "")
@@ -248,7 +247,7 @@ TOOL_PROTOCOL_SYSTEM_PROMPT = (
 
 def init_state() -> None:
     if "messages" not in st.session_state:
-        st.session_state.messages: List[Dict[str, Any]] = []
+        st.session_state.messages: list[dict[str, Any]] = []
     if "models" not in st.session_state:
         st.session_state.models = []
     if "model_capabilities" not in st.session_state:
@@ -321,7 +320,7 @@ def _scan_directory(workspace_root: Path, target: str, recursive: bool) -> str:
         raise ValueError("La ruta indicada no es una carpeta.")
 
     iterator = root.rglob("*") if recursive else root.glob("*")
-    entries: List[str] = []
+    entries: list[str] = []
     for path in iterator:
         if len(entries) >= MAX_SCAN_RESULTS:
             break
@@ -383,8 +382,8 @@ def _write_text_file(workspace_root: Path, target: str, content: str, append: bo
 def _add_system_context(context: str) -> None:
     st.session_state.messages.append({"role": "system", "content": context})
 
-def _filter_exportable_messages(messages: List[Dict[str, Any]], include_system: bool) -> List[Dict[str, Any]]:
-    exportable: List[Dict[str, Any]] = []
+def _filter_exportable_messages(messages: list[dict[str, Any]], include_system: bool) -> list[dict[str, Any]]:
+    exportable: list[dict[str, Any]] = []
     for msg in messages:
         role = str(msg.get("role", "")).strip().lower()
         if role not in {"user", "assistant", "system"}:
@@ -402,10 +401,10 @@ def _filter_exportable_messages(messages: List[Dict[str, Any]], include_system: 
     return exportable
 
 
-def _build_chat_export_markdown(messages: List[Dict[str, Any]]) -> str:
+def _build_chat_export_markdown(messages: list[dict[str, Any]]) -> str:
     role_labels = {"user": "Usuario", "assistant": "Asistente", "system": "Sistema"}
-    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-    lines: List[str] = [
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    lines: list[str] = [
         "# Export de Chat",
         "",
         f"- Generado: {timestamp}",
@@ -427,9 +426,9 @@ def _build_chat_export_markdown(messages: List[Dict[str, Any]]) -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
-def _build_chat_export_json(messages: List[Dict[str, Any]]) -> str:
+def _build_chat_export_json(messages: list[dict[str, Any]]) -> str:
     payload = {
-        "exported_at_utc": datetime.now(timezone.utc).isoformat(),
+        "exported_at_utc": datetime.now(UTC).isoformat(),
         "message_count": len(messages),
         "messages": messages,
     }
@@ -438,7 +437,7 @@ def _build_chat_export_json(messages: List[Dict[str, Any]]) -> str:
 
 def _export_chat_to_workspace(
     workspace_root: Path,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     export_format: str,
     include_system: bool,
 ) -> Path:
@@ -456,7 +455,7 @@ def _export_chat_to_workspace(
     export_dir = workspace_root / CHAT_EXPORT_DIRNAME
     export_dir.mkdir(parents=True, exist_ok=True)
 
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
     extension = "md" if normalized_format == "markdown" else "json"
     export_path = export_dir / f"chat_export_{timestamp}.{extension}"
 
@@ -607,7 +606,7 @@ def _execute_workspace_command_with_cd(
 
 def _build_workspace_context(workspace_root: Path, command_cwd: Path) -> str:
     rel = _relative_path_label(workspace_root, command_cwd)
-    entries: List[str] = []
+    entries: list[str] = []
     for path in command_cwd.glob("*"):
         suffix = "/" if path.is_dir() else ""
         entries.append(f"{path.name}{suffix}")
@@ -630,8 +629,8 @@ def _is_probably_text_file(path: Path) -> bool:
     return path.name.lower() in {"readme", "readme.md", "license", "pyproject.toml", "requirements.txt"}
 
 
-def _chunk_text(text: str, max_chars: int) -> List[str]:
-    chunks: List[str] = []
+def _chunk_text(text: str, max_chars: int) -> list[str]:
+    chunks: list[str] = []
     current = ""
     for paragraph in text.split("\n\n"):
         paragraph = paragraph.strip()
@@ -657,12 +656,12 @@ def _chunk_text(text: str, max_chars: int) -> List[str]:
     return chunks
 
 
-def _tokenize_for_rag(text: str) -> List[str]:
+def _tokenize_for_rag(text: str) -> list[str]:
     return [t for t in re.findall(r"[a-zA-Z0-9_áéíóúñÁÉÍÓÚÑ]{3,}", text.lower())]
 
 
-def _iter_rag_candidate_files(workspace_root: Path) -> List[Path]:
-    files: List[Path] = []
+def _iter_rag_candidate_files(workspace_root: Path) -> list[Path]:
+    files: list[Path] = []
     for path in workspace_root.rglob("*"):
         if any(part in RAG_IGNORED_DIRS for part in path.parts):
             continue
@@ -690,12 +689,12 @@ def _read_text_file_safely(path: Path, max_chars: int) -> str | None:
     return text[:max_chars]
 
 
-def _build_local_rag_context(workspace_root: Path, user_prompt: str) -> tuple[str | None, List[str]]:
+def _build_local_rag_context(workspace_root: Path, user_prompt: str) -> tuple[str | None, list[str]]:
     query_tokens = _tokenize_for_rag(user_prompt)
     if not query_tokens:
         return None, []
 
-    scored_chunks: List[tuple[int, str, Path]] = []
+    scored_chunks: list[tuple[int, str, Path]] = []
     candidate_files = _iter_rag_candidate_files(workspace_root)
     query_set = set(query_tokens)
 
@@ -717,8 +716,8 @@ def _build_local_rag_context(workspace_root: Path, user_prompt: str) -> tuple[st
 
     scored_chunks.sort(key=lambda item: item[0], reverse=True)
     top = scored_chunks[:MAX_RAG_TOP_CHUNKS]
-    context_blocks: List[str] = []
-    source_paths: List[str] = []
+    context_blocks: list[str] = []
+    source_paths: list[str] = []
     total_chars = 0
 
     for _, chunk, path in top:
@@ -818,14 +817,14 @@ def _read_text_file_raw(path: Path) -> str | None:
     return None
 
 
-def _extract_requested_files_from_prompt(workspace_root: Path, user_prompt: str) -> List[str]:
+def _extract_requested_files_from_prompt(workspace_root: Path, user_prompt: str) -> list[str]:
     prompt_lower = user_prompt.lower()
     has_read_intent = any(term in prompt_lower for term in READ_INTENT_TERMS)
     has_write_intent = _is_write_intent_prompt(user_prompt)
     if not has_read_intent and not has_write_intent:
         return []
 
-    requested: List[str] = []
+    requested: list[str] = []
     if "readme" in prompt_lower:
         for candidate in ("README.md", "readme.md"):
             path = workspace_root / candidate
@@ -845,7 +844,7 @@ def _maybe_add_requested_file_context(workspace_root: Path, user_prompt: str) ->
     if not requested_files:
         return
 
-    blocks: List[str] = []
+    blocks: list[str] = []
     for file_ref in requested_files[:3]:
         try:
             content = _read_text_file(workspace_root=workspace_root, target=file_ref)
@@ -881,12 +880,12 @@ def _is_write_or_edit_command(command: str) -> bool:
     return False
 
 
-def _extract_json_candidates(text: str) -> List[str]:
+def _extract_json_candidates(text: str) -> list[str]:
     stripped = text.strip()
     if not stripped:
         return []
 
-    candidates: List[str] = []
+    candidates: list[str] = []
     for match in TOOL_JSON_CODE_BLOCK_PATTERN.findall(text):
         candidate = match.strip()
         if candidate and candidate not in candidates:
@@ -914,8 +913,8 @@ def _extract_json_candidates(text: str) -> List[str]:
 def _normalize_write_file_tool_request(
     workspace_root: Path,
     user_prompt: str,
-    tool_request: Dict[str, Any],
-) -> tuple[Dict[str, Any], str | None]:
+    tool_request: dict[str, Any],
+) -> tuple[dict[str, Any], str | None]:
     if tool_request.get("tool") != "write_file":
         return tool_request, None
 
@@ -973,7 +972,7 @@ def _normalize_write_file_tool_request(
     return {"tool": "write_file", "args": args}, None
 
 
-def _extract_tool_request(assistant_text: str) -> Dict[str, Any] | None:
+def _extract_tool_request(assistant_text: str) -> dict[str, Any] | None:
     for candidate in _extract_json_candidates(assistant_text):
         try:
             parsed = json.loads(candidate)
@@ -1004,14 +1003,14 @@ def _attempt_tool_request_repair_from_text(
     model: str,
     temperature: float,
     assistant_text: str,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     trimmed = assistant_text.strip()
     if not trimmed:
         return None
     if len(trimmed) > MAX_TOOL_REPAIR_CHARS:
         trimmed = trimmed[:MAX_TOOL_REPAIR_CHARS]
 
-    recovery_messages: List[Dict[str, Any]] = [
+    recovery_messages: list[dict[str, Any]] = [
         {"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT},
         {
             "role": "system",
@@ -1026,7 +1025,7 @@ def _attempt_tool_request_repair_from_text(
             "content": f"Corrige y devuelve solo JSON válido:\n\n{trimmed}",
         },
     ]
-    chunks: List[str] = []
+    chunks: list[str] = []
     try:
         for chunk in client.chat_stream(
             model=model,
@@ -1044,9 +1043,9 @@ def _attempt_tool_request_recovery(
     client: OllamaClient,
     model: str,
     temperature: float,
-    messages: List[Dict[str, Any]],
-) -> Dict[str, Any] | None:
-    recovery_messages: List[Dict[str, Any]] = [
+    messages: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    recovery_messages: list[dict[str, Any]] = [
         {"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT},
         {
             "role": "system",
@@ -1065,7 +1064,7 @@ def _attempt_tool_request_recovery(
             ),
         },
     ]
-    chunks: List[str] = []
+    chunks: list[str] = []
     try:
         for chunk in client.chat_stream(
             model=model,
@@ -1083,15 +1082,15 @@ def _attempt_action_tool_request_recovery(
     client: OllamaClient,
     model: str,
     temperature: float,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
     user_prompt: str,
     assistant_text: str,
-) -> Dict[str, Any] | None:
+) -> dict[str, Any] | None:
     trimmed_assistant = assistant_text.strip()
     if len(trimmed_assistant) > MAX_TOOL_REPAIR_CHARS:
         trimmed_assistant = trimmed_assistant[:MAX_TOOL_REPAIR_CHARS]
 
-    recovery_messages: List[Dict[str, Any]] = [
+    recovery_messages: list[dict[str, Any]] = [
         {"role": "system", "content": TOOL_PROTOCOL_SYSTEM_PROMPT},
         {
             "role": "system",
@@ -1118,7 +1117,7 @@ def _attempt_action_tool_request_recovery(
             ),
         },
     ]
-    chunks: List[str] = []
+    chunks: list[str] = []
     try:
         for chunk in client.chat_stream(
             model=model,
@@ -1132,7 +1131,7 @@ def _attempt_action_tool_request_recovery(
     return _extract_tool_request(recovery_text)
 
 
-def _validate_tool_request(tool_request: Dict[str, Any]) -> str | None:
+def _validate_tool_request(tool_request: dict[str, Any]) -> str | None:
     tool_name = tool_request["tool"]
     args = tool_request["args"]
 
@@ -1181,7 +1180,7 @@ def _validate_tool_request(tool_request: Dict[str, Any]) -> str | None:
     return f"Herramienta no soportada: {tool_name}"
 
 
-def _is_tool_request_write(tool_request: Dict[str, Any]) -> bool:
+def _is_tool_request_write(tool_request: dict[str, Any]) -> bool:
     tool_name = tool_request["tool"]
     args = tool_request["args"]
     if tool_name in {"write_file", "create_directory"}:
@@ -1192,14 +1191,14 @@ def _is_tool_request_write(tool_request: Dict[str, Any]) -> bool:
     return False
 
 
-def _format_tool_request_for_user(tool_request: Dict[str, Any]) -> str:
+def _format_tool_request_for_user(tool_request: dict[str, Any]) -> str:
     tool_name = tool_request["tool"]
     args = tool_request["args"]
     return f"{tool_name}({json.dumps(args, ensure_ascii=False)})"
 
 
 def _execute_tool_request(
-    workspace_root: Path, command_cwd: Path, tool_request: Dict[str, Any]
+    workspace_root: Path, command_cwd: Path, tool_request: dict[str, Any]
 ) -> tuple[str, Path]:
     tool_name = tool_request["tool"]
     args = tool_request["args"]
@@ -1255,9 +1254,9 @@ def _call_model_once(
     client: OllamaClient,
     model: str,
     temperature: float,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
 ) -> str:
-    chunks: List[str] = []
+    chunks: list[str] = []
     for chunk in client.chat_stream(
         model=model,
         messages=messages,
@@ -1267,7 +1266,7 @@ def _call_model_once(
     return "".join(chunks)
 
 
-def _build_tool_observation(tool_request: Dict[str, Any], tool_result: str, step: int | None) -> str:
+def _build_tool_observation(tool_request: dict[str, Any], tool_result: str, step: int | None) -> str:
     step_label = f"paso {step}" if step else "paso aprobado por usuario"
     return (
         f"Observation ({step_label}):\n"
@@ -1291,10 +1290,10 @@ def _run_agent_reasoning_loop(
     workspace_root: Path,
     command_cwd: Path,
     user_prompt: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     current_cwd = command_cwd
     executed_steps = 0
-    trace_lines: List[str] = []
+    trace_lines: list[str] = []
     action_intent = _is_action_intent_prompt(user_prompt)
     action_recovery_used = False
     action_guidance_injected = False
@@ -1497,15 +1496,15 @@ def _run_agent_reasoning_loop(
 
 def build_user_message(
     prompt: str,
-    uploaded_files: List[Any],
+    uploaded_files: list[Any],
     supports_vision: bool,
     max_file_size_bytes: int,
-) -> tuple[Dict[str, Any], List[str]]:
-    message: Dict[str, Any] = {"role": "user", "content": prompt}
-    attachment_labels: List[str] = []
-    ignored_files: List[str] = []
-    text_context_blocks: List[str] = []
-    image_blobs: List[str] = []
+) -> tuple[dict[str, Any], list[str]]:
+    message: dict[str, Any] = {"role": "user", "content": prompt}
+    attachment_labels: list[str] = []
+    ignored_files: list[str] = []
+    text_context_blocks: list[str] = []
+    image_blobs: list[str] = []
 
     for uploaded_file in uploaded_files:
         filename = uploaded_file.name

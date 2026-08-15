@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from config import (
     EMBEDDING_ENABLED,
@@ -64,11 +64,11 @@ class SemanticRAG:
         self._store = None
         self._emb_client = None
         self._local_rag = None
-        self._semantic_available: Optional[bool] = None
+        self._semantic_available: bool | None = None
 
         # Estado para cooldown de sugerencias proactivas
         # clave: frozenset de paths sugeridos, valor: turns restantes de cooldown
-        self._suggestion_cooldown: Dict[frozenset, int] = {}
+        self._suggestion_cooldown: dict[frozenset, int] = {}
         self._turn_counter: int = 0
 
     # ------------------------------------------------------------------
@@ -116,7 +116,7 @@ class SemanticRAG:
         top_k: int = RAG_SEMANTIC_TOP_K,
         max_context_chars: int = MAX_RAG_CONTEXT_CHARS,
         include_kb: bool = True,
-    ) -> Tuple[Optional[str], List[str]]:
+    ) -> tuple[str | None, list[str]]:
         """
         Recupera contexto relevante para una query.
 
@@ -142,7 +142,7 @@ class SemanticRAG:
         top_k: int,
         max_context_chars: int,
         include_kb: bool,
-    ) -> Tuple[Optional[str], List[str]]:
+    ) -> tuple[str | None, list[str]]:
         from rag.embeddings import EmbeddingError
 
         try:
@@ -158,8 +158,8 @@ class SemanticRAG:
         if not results:
             return None, []
 
-        context_blocks: List[str] = []
-        source_paths: List[str] = []
+        context_blocks: list[str] = []
+        source_paths: list[str] = []
         total_chars = 0
 
         for r in results:
@@ -201,9 +201,9 @@ class SemanticRAG:
 
     def get_proactive_suggestions(
         self,
-        recent_messages: List[str],
+        recent_messages: list[str],
         top_k: int = 3,
-    ) -> List[ProactiveSuggestion]:
+    ) -> list[ProactiveSuggestion]:
         """
         Genera sugerencias proactivas de archivos relevantes para el contexto actual.
 
@@ -238,7 +238,7 @@ class SemanticRAG:
         # Buscar solo en workspace (no KB) para sugerencias de archivos
         results = self._store.query(vec, top_k=top_k * 2, target="workspace")
 
-        suggestions: List[ProactiveSuggestion] = []
+        suggestions: list[ProactiveSuggestion] = []
         seen_paths: set = set()
 
         for r in results:
@@ -323,7 +323,7 @@ class SemanticRAG:
         else:
             logger.info("SemanticRAG: %d chunks ya indexados, omitiendo re-indexación", chunk_count)
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         """Retorna el estado actual del sistema semántico."""
         from rag.indexer import get_indexer_status
         idxr_status = get_indexer_status(self._ws_root_str)
@@ -345,7 +345,7 @@ class SemanticRAG:
 # ---------------------------------------------------------------------------
 # Registry singleton por workspace
 # ---------------------------------------------------------------------------
-_SRAG_REGISTRY: Dict[str, SemanticRAG] = {}
+_SRAG_REGISTRY: dict[str, SemanticRAG] = {}
 
 
 def get_semantic_rag(workspace_root: str) -> SemanticRAG:

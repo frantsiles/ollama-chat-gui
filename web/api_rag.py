@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -18,13 +18,13 @@ class DocumentCreate(BaseModel):
     text: str = Field(..., description="Contenido textual del documento")
     title: str = Field("", description="Título descriptivo")
     source: str = Field("", description="Origen (nombre de archivo, referencia, etc.)")
-    tags: List[str] = Field(default_factory=list, description="Etiquetas para filtrado")
+    tags: list[str] = Field(default_factory=list, description="Etiquetas para filtrado")
 
 
 class URLIngest(BaseModel):
     url: str = Field(..., description="URL a descargar e indexar")
     title: str = Field("", description="Título manual (opcional)")
-    tags: List[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
 
 
 class KBQuery(BaseModel):
@@ -37,7 +37,7 @@ class KBQuery(BaseModel):
 # =============================================================================
 
 @router.get("/api/rag/status")
-async def get_rag_status(workspace_root: str = "") -> Dict[str, Any]:
+async def get_rag_status(workspace_root: str = "") -> dict[str, Any]:
     """
     Estado del sistema RAG semántico para un workspace.
 
@@ -56,7 +56,7 @@ async def get_rag_status(workspace_root: str = "") -> Dict[str, Any]:
 async def reindex_workspace(
     session_id: str,
     force: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Lanza una re-indexación del workspace de la sesión en background.
 
@@ -90,7 +90,7 @@ async def reindex_workspace(
 # =============================================================================
 
 @router.get("/api/kb/documents")
-async def list_kb_documents() -> Dict[str, Any]:
+async def list_kb_documents() -> dict[str, Any]:
     """Lista todos los documentos en la Knowledge Base."""
     from rag.knowledge_base import get_knowledge_base
     kb = get_knowledge_base()
@@ -99,7 +99,7 @@ async def list_kb_documents() -> Dict[str, Any]:
 
 
 @router.post("/api/kb/documents")
-async def add_kb_document(data: DocumentCreate) -> Dict[str, Any]:
+async def add_kb_document(data: DocumentCreate) -> dict[str, Any]:
     """Añade un documento de texto/Markdown a la Knowledge Base."""
     from rag.knowledge_base import get_knowledge_base
     kb = get_knowledge_base()
@@ -115,13 +115,14 @@ async def add_kb_document(data: DocumentCreate) -> Dict[str, Any]:
 
 
 @router.post("/api/kb/ingest-url")
-async def ingest_url(data: URLIngest) -> Dict[str, Any]:
+async def ingest_url(data: URLIngest) -> dict[str, Any]:
     """
     Descarga una URL, extrae el texto y lo indexa en la Knowledge Base.
     Soporta HTML (extrae texto limpio) y texto plano/markdown.
     """
-    from rag.knowledge_base import get_knowledge_base
     import asyncio
+
+    from rag.knowledge_base import get_knowledge_base
 
     kb = get_knowledge_base()
     # ingest_url puede tardar (descarga HTTP + embeddings) → ejecutar en thread
@@ -137,7 +138,7 @@ async def ingest_url(data: URLIngest) -> Dict[str, Any]:
 
 
 @router.delete("/api/kb/documents/{doc_id}")
-async def delete_kb_document(doc_id: str) -> Dict[str, Any]:
+async def delete_kb_document(doc_id: str) -> dict[str, Any]:
     """Elimina un documento y todos sus chunks de la Knowledge Base."""
     from rag.knowledge_base import get_knowledge_base
     kb = get_knowledge_base()
@@ -150,13 +151,14 @@ async def delete_kb_document(doc_id: str) -> Dict[str, Any]:
 
 
 @router.post("/api/kb/query")
-async def query_kb(data: KBQuery) -> Dict[str, Any]:
+async def query_kb(data: KBQuery) -> dict[str, Any]:
     """
     Búsqueda semántica directa en la Knowledge Base.
     Retorna los chunks más relevantes con su score de similitud.
     """
-    from rag.knowledge_base import get_knowledge_base
     import asyncio
+
+    from rag.knowledge_base import get_knowledge_base
 
     kb = get_knowledge_base()
     results = await asyncio.to_thread(kb.query, data.query, data.top_k)

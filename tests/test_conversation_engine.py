@@ -11,7 +11,7 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
 
@@ -147,7 +147,7 @@ class TestToolRegistry:
 class TestNaturalConversationLoop:
     """Prueba el bucle interno con LLM y tool mockeados."""
 
-    def _make_loop(self, llm_responses: List[str], tool_output: str = "OK"):
+    def _make_loop(self, llm_responses: list[str], tool_output: str = "OK"):
         """Construye un NaturalConversationLoop con dobles de prueba."""
         from core.conversation.natural_loop import NaturalConversationLoop
         from core.models import AgentState, ToolCall, ToolResult
@@ -160,7 +160,7 @@ class TestNaturalConversationLoop:
             except StopIteration:
                 return "No tengo más respuestas."
 
-        def fake_parse(response: str) -> Dict[str, Any]:
+        def fake_parse(response: str) -> dict[str, Any]:
             if "list_directory" in response:
                 return {"needs_tool": True, "tool": "list_directory", "args": {"path": "."}}
             return {"needs_tool": False}
@@ -168,7 +168,7 @@ class TestNaturalConversationLoop:
         def fake_build_messages(conv, system_prompt):
             return [{"role": "system", "content": system_prompt or ""}]
 
-        def fake_validate(tc: ToolCall) -> Optional[str]:
+        def fake_validate(tc: ToolCall) -> str | None:
             return None  # siempre válida
 
         def fake_is_write(tc: ToolCall) -> bool:

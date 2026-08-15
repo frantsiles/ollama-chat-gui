@@ -13,9 +13,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
 
 from config import (
     MAX_RAG_CHUNK_CHARS,
@@ -45,16 +45,16 @@ class IndexerStatus:
     indexed_files: int = 0
     total_files: int = 0
     indexed_chunks: int = 0
-    last_run: Optional[str] = None
-    error: Optional[str] = None
+    last_run: str | None = None
+    error: str | None = None
     # mtime cache: {str(path): mtime_float}
-    _mtime_index: Dict[str, float] = field(default_factory=dict)
+    _mtime_index: dict[str, float] = field(default_factory=dict)
 
 
 # Registro global de estados por workspace
-_STATUS_REGISTRY: Dict[str, IndexerStatus] = {}
+_STATUS_REGISTRY: dict[str, IndexerStatus] = {}
 # Lock global para evitar indexaciones concurrentes del mismo workspace
-_LOCKS: Dict[str, threading.Lock] = {}
+_LOCKS: dict[str, threading.Lock] = {}
 
 
 def _get_lock(workspace_root: str) -> threading.Lock:
@@ -85,8 +85,8 @@ def _is_text_file(path: Path) -> bool:
     }
 
 
-def _iter_candidate_files(workspace_root: Path) -> List[Path]:
-    files: List[Path] = []
+def _iter_candidate_files(workspace_root: Path) -> list[Path]:
+    files: list[Path] = []
     try:
         for path in workspace_root.rglob("*"):
             if len(files) >= MAX_RAG_FILES:
@@ -103,7 +103,7 @@ def _iter_candidate_files(workspace_root: Path) -> List[Path]:
     return files
 
 
-def _read_file(path: Path, max_chars: int = MAX_RAG_FILE_CHARS) -> Optional[str]:
+def _read_file(path: Path, max_chars: int = MAX_RAG_FILE_CHARS) -> str | None:
     try:
         raw = path.read_bytes()
         for enc in ("utf-8", "latin-1"):
@@ -116,8 +116,8 @@ def _read_file(path: Path, max_chars: int = MAX_RAG_FILE_CHARS) -> Optional[str]
         return None
 
 
-def _chunk_text(text: str, max_chars: int = MAX_RAG_CHUNK_CHARS) -> List[str]:
-    chunks: List[str] = []
+def _chunk_text(text: str, max_chars: int = MAX_RAG_CHUNK_CHARS) -> list[str]:
+    chunks: list[str] = []
     current = ""
     for paragraph in text.split("\n\n"):
         paragraph = paragraph.strip()
@@ -165,8 +165,8 @@ class WorkspaceIndexer:
     def __init__(
         self,
         workspace_root: Path,
-        store: Optional[VectorStore] = None,
-        emb_client: Optional[EmbeddingClient] = None,
+        store: VectorStore | None = None,
+        emb_client: EmbeddingClient | None = None,
     ) -> None:
         self.workspace_root = workspace_root.resolve()
         self.store = store or get_vector_store(str(self.workspace_root))
@@ -180,7 +180,7 @@ class WorkspaceIndexer:
     def index_workspace(
         self,
         force: bool = False,
-        progress_cb: Optional[ProgressCallback] = None,
+        progress_cb: ProgressCallback | None = None,
     ) -> IndexerStatus:
         """
         Indexa (o actualiza) todos los archivos del workspace.
@@ -205,7 +205,7 @@ class WorkspaceIndexer:
     def _do_index(
         self,
         force: bool,
-        progress_cb: Optional[ProgressCallback],
+        progress_cb: ProgressCallback | None,
     ) -> IndexerStatus:
         status = self.status
         status.is_running = True
@@ -253,7 +253,7 @@ class WorkspaceIndexer:
                 continue
 
             # Generar embeddings y construir Chunk objects
-            chunks_to_upsert: List[Chunk] = []
+            chunks_to_upsert: list[Chunk] = []
             for idx, chunk_text in enumerate(chunks_text):
                 try:
                     vec = self.emb_client.embed(chunk_text)
@@ -324,7 +324,7 @@ class WorkspaceIndexer:
             return 0
 
         chunks_text = _chunk_text(text)
-        chunks_to_upsert: List[Chunk] = []
+        chunks_to_upsert: list[Chunk] = []
 
         for idx, chunk_text in enumerate(chunks_text):
             try:
@@ -362,8 +362,8 @@ class WorkspaceIndexer:
     def index_workspace_async(
         self,
         force: bool = False,
-        progress_cb: Optional[ProgressCallback] = None,
-        done_cb: Optional[Callable[[IndexerStatus], None]] = None,
+        progress_cb: ProgressCallback | None = None,
+        done_cb: Callable[[IndexerStatus], None] | None = None,
     ) -> threading.Thread:
         """
         Lanza la indexación en un thread background.
@@ -389,7 +389,7 @@ class WorkspaceIndexer:
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
-_INDEXER_REGISTRY: Dict[str, WorkspaceIndexer] = {}
+_INDEXER_REGISTRY: dict[str, WorkspaceIndexer] = {}
 
 
 def get_indexer(workspace_root: str) -> WorkspaceIndexer:

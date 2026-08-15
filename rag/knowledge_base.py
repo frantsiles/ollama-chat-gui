@@ -12,7 +12,7 @@ import logging
 import re
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlparse
 
 import requests as http_requests
@@ -31,9 +31,9 @@ _HTTP_TIMEOUT = 15
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _chunk_text(text: str, max_chars: int = KB_CHUNK_CHARS) -> List[str]:
+def _chunk_text(text: str, max_chars: int = KB_CHUNK_CHARS) -> list[str]:
     """Trocea texto en chunks por párrafos."""
-    chunks: List[str] = []
+    chunks: list[str] = []
     current = ""
     for paragraph in text.split("\n\n"):
         paragraph = paragraph.strip()
@@ -118,9 +118,9 @@ class KnowledgeBase:
         text: str,
         title: str = "",
         source: str = "",
-        tags: Optional[List[str]] = None,
-        doc_id: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        tags: list[str] | None = None,
+        doc_id: str | None = None,
+    ) -> dict[str, Any]:
         """
         Añade un documento de texto/Markdown a la KB.
 
@@ -160,7 +160,7 @@ class KnowledgeBase:
         now = datetime.now().isoformat()
         chunks_text = _chunk_text(text)
 
-        chunks_to_upsert: List[Chunk] = []
+        chunks_to_upsert: list[Chunk] = []
         for idx, chunk_text in enumerate(chunks_text):
             try:
                 vec = self._emb_client.embed(chunk_text)
@@ -214,8 +214,8 @@ class KnowledgeBase:
         self,
         url: str,
         title: str = "",
-        tags: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        tags: list[str] | None = None,
+    ) -> dict[str, Any]:
         """
         Descarga una URL, extrae el texto y lo ingesta en la KB.
 
@@ -279,7 +279,7 @@ class KnowledgeBase:
         self,
         query_text: str,
         top_k: int = 5,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Búsqueda semántica en la KB.
 
@@ -311,11 +311,11 @@ class KnowledgeBase:
     # Listado / eliminación
     # ------------------------------------------------------------------
 
-    def list_documents(self) -> List[Dict[str, Any]]:
+    def list_documents(self) -> list[dict[str, Any]]:
         """Lista los documentos únicos en la KB (agrupados por doc_id)."""
         sources = self._store.list_sources(target="kb")
         # Agrupar por doc_id
-        doc_map: Dict[str, Dict[str, Any]] = {}
+        doc_map: dict[str, dict[str, Any]] = {}
         for s in sources:
             doc_id = s.get("doc_id", s.get("source", "unknown"))
             if doc_id not in doc_map:
@@ -330,7 +330,7 @@ class KnowledgeBase:
             doc_map[doc_id]["chunk_count"] += s.get("chunk_count", 0)
         return list(doc_map.values())
 
-    def delete_document(self, doc_id: str) -> Dict[str, Any]:
+    def delete_document(self, doc_id: str) -> dict[str, Any]:
         """
         Elimina un documento y todos sus chunks de la KB.
 
@@ -363,7 +363,7 @@ class KnowledgeBase:
 # ---------------------------------------------------------------------------
 # Singleton
 # ---------------------------------------------------------------------------
-_KB_INSTANCE: Optional[KnowledgeBase] = None
+_KB_INSTANCE: KnowledgeBase | None = None
 
 
 def get_knowledge_base() -> KnowledgeBase:

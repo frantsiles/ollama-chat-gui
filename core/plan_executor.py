@@ -16,9 +16,10 @@ from __future__ import annotations
 import ast
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from config import MAX_STEP_RETRIES
 from core.models import (
@@ -30,8 +31,7 @@ from core.models import (
     StepStatus,
     ToolCall,
 )
-from llm.prompts import PromptManager, STEP_RETRY_PROMPT
-
+from llm.prompts import STEP_RETRY_PROMPT, PromptManager
 
 # Placeholder: {nombre} que NO esté precedido de f' o f" (evita falsos positivos con f-strings)
 _PLACEHOLDER_RE = re.compile(r"\{[a-zA-Z_]\w*\}")
@@ -42,7 +42,7 @@ class PlanExecutor:
 
     def __init__(
         self,
-        llm_call: Callable[[List[Dict[str, Any]], Optional[str]], str],
+        llm_call: Callable[[list[dict[str, Any]], str | None], str],
         tool_registry: Any,
         approval_manager: Any,
         state: AgentState,
@@ -63,8 +63,8 @@ class PlanExecutor:
         plan: Plan,
         conversation: Conversation,
         auto_execute: bool = False,
-        step_callback: Optional[Callable[[str, dict], None]] = None,
-    ) -> "PlanExecutionResult":
+        step_callback: Callable[[str, dict], None] | None = None,
+    ) -> PlanExecutionResult:
         """Ejecuta el siguiente paso del plan (recursivo hasta completar).
 
         Returns:
@@ -138,7 +138,7 @@ class PlanExecutor:
         plan: Plan,
         conversation: Conversation,
         auto_execute: bool,
-        step_callback: Optional[Callable[[str, dict], None]],
+        step_callback: Callable[[str, dict], None] | None,
     ) -> None:
         """Ejecuta el paso actual con tool, incluyendo retry si falla."""
         # Resolver args dinámicamente cuando aplica (solo en auto_execute)
@@ -198,10 +198,10 @@ class PlanExecutor:
         self,
         current_step,
         effective_tool: str,
-        resolved_args: Dict[str, Any],
+        resolved_args: dict[str, Any],
         plan: Plan,
         conversation: Conversation,
-        step_callback: Optional[Callable[[str, dict], None]],
+        step_callback: Callable[[str, dict], None] | None,
     ) -> bool:
         """Intenta reintentar un paso fallido. Retorna True si tuvo éxito."""
         result = current_step.result
@@ -297,7 +297,7 @@ class PlanExecutor:
     # Resolución de args dinámicos
     # ------------------------------------------------------------------
 
-    def _needs_arg_resolution(self, tool_name: str, args: Dict[str, Any]) -> bool:
+    def _needs_arg_resolution(self, tool_name: str, args: dict[str, Any]) -> bool:
         """Decide si los args de un paso necesitan resolución dinámica via LLM."""
         if not args or self._args_have_placeholders(args):
             return True
@@ -321,7 +321,7 @@ class PlanExecutor:
         return False
 
     @staticmethod
-    def _args_have_placeholders(args: Dict[str, Any]) -> bool:
+    def _args_have_placeholders(args: dict[str, Any]) -> bool:
         """Detecta placeholders {nombre} en los args (excepto en 'code')."""
         for key, v in args.items():
             if key == "code":
@@ -335,9 +335,9 @@ class PlanExecutor:
         step_id: int,
         step_description: str,
         tool_name: str,
-        raw_args: Dict[str, Any],
+        raw_args: dict[str, Any],
         conversation: Conversation,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Pide al LLM que resuelva los args usando los resultados anteriores."""
         prev_results = self._collect_observations(conversation)
 
@@ -382,11 +382,11 @@ class PlanExecutor:
         self,
         step_description: str,
         tool_name: str,
-        original_args: Dict[str, Any],
+        original_args: dict[str, Any],
         error_message: str,
         attempt: int,
         conversation: Conversation,
-    ) -> Optional[ToolCall]:
+    ) -> ToolCall | None:
         """Genera un ToolCall alternativo via LLM cuando un paso falla."""
         prev_results = self._collect_observations(conversation)
 
@@ -471,7 +471,7 @@ class PlanExecutor:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _collect_observations(conversation: Conversation) -> List[str]:
+    def _collect_observations(conversation: Conversation) -> list[str]:
         """Extrae las observaciones (resultados de tools) del historial."""
         return [
             msg.content
@@ -493,5 +493,5 @@ class PlanExecutionResult:
     """Resultado de ejecutar un (o varios) pasos del plan."""
     status: str                # completed | awaiting_approval
     content: str = ""
-    plan: Optional[Plan] = None
-    trace: List[str] = field(default_factory=list)
+    plan: Plan | None = None
+    trace: list[str] = field(default_factory=list)

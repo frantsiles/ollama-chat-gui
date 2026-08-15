@@ -5,9 +5,10 @@ from __future__ import annotations
 import json
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Type
+from typing import Any
 
-from core.models import ToolCall, ToolResult as ModelToolResult
+from core.models import ToolCall
+from core.models import ToolResult as ModelToolResult
 from tools.base import BaseTool
 from tools.command import CommandValidator, RunCommandTool
 from tools.filesystem import (
@@ -18,7 +19,6 @@ from tools.filesystem import (
     WriteFileTool,
 )
 from tools.python_executor import ExecutePythonTool
-
 
 # Patrón para extraer JSON de bloques de código
 TOOL_JSON_PATTERN = re.compile(
@@ -37,10 +37,10 @@ class ToolRegistry:
 
     # Herramientas virtuales: aceptadas por extract_tool_call pero no ejecutadas
     # por el registry (el agente las intercepta antes).
-    VIRTUAL_TOOLS: Set[str] = {"final_answer"}
+    VIRTUAL_TOOLS: set[str] = {"final_answer"}
 
     # Herramientas disponibles (clase -> nombre)
-    AVAILABLE_TOOLS: Dict[str, Type[BaseTool]] = {
+    AVAILABLE_TOOLS: dict[str, type[BaseTool]] = {
         "read_file": ReadFileTool,
         "write_file": WriteFileTool,
         "list_directory": ListDirectoryTool,
@@ -60,9 +60,9 @@ class ToolRegistry:
         """
         self.workspace_root = workspace_root.resolve()
         self.current_cwd = current_cwd.resolve()
-        self._instances: Dict[str, BaseTool] = {}
-        self._dynamic_ollama_tools: List[Dict[str, Any]] = []
-        self._dynamic_executors: Dict[str, Any] = {}
+        self._instances: dict[str, BaseTool] = {}
+        self._dynamic_ollama_tools: list[dict[str, Any]] = []
+        self._dynamic_executors: dict[str, Any] = {}
     
     def update_cwd(self, new_cwd: Path) -> None:
         """Actualiza el directorio de trabajo actual."""
@@ -76,7 +76,7 @@ class ToolRegistry:
         if tool:
             tool.timeout = seconds  # type: ignore[attr-defined]
     
-    def get_tool(self, name: str) -> Optional[BaseTool]:
+    def get_tool(self, name: str) -> BaseTool | None:
         """
         Obtiene una instancia de herramienta por nombre.
         
@@ -98,11 +98,11 @@ class ToolRegistry:
         
         return self._instances[name]
     
-    def list_tools(self) -> List[str]:
+    def list_tools(self) -> list[str]:
         """Lista los nombres de todas las herramientas disponibles."""
         return list(self.AVAILABLE_TOOLS.keys())
     
-    def get_tool_definitions(self) -> List[Dict[str, Any]]:
+    def get_tool_definitions(self) -> list[dict[str, Any]]:
         """Retorna las definiciones de todas las herramientas."""
         definitions = []
         for name in self.AVAILABLE_TOOLS:
@@ -120,7 +120,7 @@ class ToolRegistry:
                 lines.append(f"- {tool.get_signature()}: {tool.description}")
         return "\n".join(lines)
 
-    def get_ollama_tools(self) -> List[Dict[str, Any]]:
+    def get_ollama_tools(self) -> list[dict[str, Any]]:
         """Retorna todas las herramientas en formato Ollama function calling."""
         result = []
         for name in self.AVAILABLE_TOOLS:
@@ -133,7 +133,7 @@ class ToolRegistry:
     def register_dynamic_tool(
         self,
         name: str,
-        ollama_tool: Dict[str, Any],
+        ollama_tool: dict[str, Any],
         executor,
     ) -> None:
         """Registra una herramienta dinámica (ej: de MCP) en tiempo de ejecución.
@@ -146,7 +146,7 @@ class ToolRegistry:
         self._dynamic_ollama_tools.append(ollama_tool)
         self._dynamic_executors[name] = executor
 
-    def execute_dynamic(self, name: str, args: Dict[str, Any]) -> str:
+    def execute_dynamic(self, name: str, args: dict[str, Any]) -> str:
         """Ejecuta una herramienta dinámica registrada."""
         executor = self._dynamic_executors.get(name)
         if not executor:
@@ -181,7 +181,7 @@ class ToolRegistry:
         
         return tool.is_write_operation
     
-    def validate_tool_call(self, tool_call: ToolCall) -> Optional[str]:
+    def validate_tool_call(self, tool_call: ToolCall) -> str | None:
         """
         Valida una llamada a herramienta.
         
@@ -244,7 +244,7 @@ class ToolRegistry:
         )
     
     @staticmethod
-    def extract_tool_call(text: str) -> Optional[ToolCall]:
+    def extract_tool_call(text: str) -> ToolCall | None:
         """
         Extrae una llamada a herramienta del texto del modelo.
         
@@ -289,13 +289,13 @@ class ToolRegistry:
         return None
     
     @staticmethod
-    def _extract_json_candidates(text: str) -> List[str]:
+    def _extract_json_candidates(text: str) -> list[str]:
         """Extrae posibles JSON del texto."""
         stripped = text.strip()
         if not stripped:
             return []
         
-        candidates: List[str] = []
+        candidates: list[str] = []
         
         # Buscar en bloques de código
         for match in TOOL_JSON_PATTERN.findall(text):

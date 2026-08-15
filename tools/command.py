@@ -6,7 +6,6 @@ import os
 import shlex
 import subprocess
 from pathlib import Path
-from typing import List, Optional
 
 from config import (
     BLOCKED_COMMAND_PATTERNS,
@@ -23,7 +22,7 @@ class CommandValidator:
     """Validador de seguridad para comandos."""
     
     @staticmethod
-    def validate(command: str) -> Optional[str]:
+    def validate(command: str) -> str | None:
         """
         Valida un comando por seguridad.
         
@@ -104,14 +103,14 @@ class RunCommandTool(BaseTool):
     
     def __init__(self, workspace_root: Path, current_cwd: Path):
         super().__init__(workspace_root, current_cwd)
-        self._new_cwd: Optional[Path] = None
+        self._new_cwd: Path | None = None
     
     @property
-    def new_cwd(self) -> Optional[Path]:
+    def new_cwd(self) -> Path | None:
         """Retorna el nuevo CWD si el comando fue cd."""
         return self._new_cwd
     
-    def get_parameters(self) -> List[ToolParameter]:
+    def get_parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
                 name="command",

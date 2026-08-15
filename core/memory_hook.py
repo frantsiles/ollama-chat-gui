@@ -10,7 +10,8 @@ flujo principal de la conversación.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List
+from collections.abc import Callable
+from typing import Any
 
 
 class MemoryExtractionHook:
@@ -19,7 +20,7 @@ class MemoryExtractionHook:
     def __init__(
         self,
         memory_store: Any,
-        llm_call: Callable[[List[Dict[str, Any]]], str],
+        llm_call: Callable[[list[dict[str, Any]]], str],
         workspace_root: str,
     ) -> None:
         """
@@ -51,7 +52,7 @@ class MemoryExtractionHook:
             pass  # nunca romper el flujo principal por la memoria
 
     @classmethod
-    def disabled(cls) -> "MemoryExtractionHook":
+    def disabled(cls) -> MemoryExtractionHook:
         """Hook no-op (cuando no hay MemoryStore disponible)."""
         return _NullMemoryHook()
 

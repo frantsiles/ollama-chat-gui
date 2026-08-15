@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from config import (
     MAX_RAG_CHUNK_CHARS,
@@ -16,14 +15,13 @@ from config import (
     TEXT_FILE_EXTENSIONS,
 )
 
-
 # ---------------------------------------------------------------------------
 # Registro global de instancias (singleton por workspace)
 # ---------------------------------------------------------------------------
-_RAG_REGISTRY: dict[str, "LocalRAG"] = {}
+_RAG_REGISTRY: dict[str, LocalRAG] = {}
 
 
-def get_rag(workspace_root: Path) -> "LocalRAG":
+def get_rag(workspace_root: Path) -> LocalRAG:
     """
     Retorna la instancia de LocalRAG para el workspace dado.
 
@@ -94,9 +92,9 @@ class LocalRAG:
             ".gitignore", ".env.example",
         }
     
-    def _iter_candidate_files(self) -> List[Path]:
+    def _iter_candidate_files(self) -> list[Path]:
         """Itera sobre archivos candidatos para RAG."""
-        files: List[Path] = []
+        files: list[Path] = []
         
         try:
             for path in self.workspace_root.rglob("*"):
@@ -119,7 +117,7 @@ class LocalRAG:
         
         return files
     
-    def _read_file_safely(self, path: Path, max_chars: int) -> Optional[str]:
+    def _read_file_safely(self, path: Path, max_chars: int) -> str | None:
         """
         Lee un archivo de texto de forma segura con caché por mtime.
 
@@ -151,15 +149,15 @@ class LocalRAG:
         self._mtime_cache.clear()
         self._cache.clear()
     
-    def _tokenize(self, text: str) -> List[str]:
+    def _tokenize(self, text: str) -> list[str]:
         """Tokeniza texto en palabras."""
         return [
             t for t in re.findall(r"[a-zA-Z0-9_áéíóúñÁÉÍÓÚÑ]{3,}", text.lower())
         ]
     
-    def _chunk_text(self, text: str, max_chars: int) -> List[str]:
+    def _chunk_text(self, text: str, max_chars: int) -> list[str]:
         """Divide texto en chunks por párrafos."""
-        chunks: List[str] = []
+        chunks: list[str] = []
         current = ""
         
         for paragraph in text.split("\n\n"):
@@ -198,7 +196,7 @@ class LocalRAG:
         query: str,
         max_chunks: int = MAX_RAG_TOP_CHUNKS,
         max_context_chars: int = MAX_RAG_CONTEXT_CHARS,
-    ) -> Tuple[Optional[str], List[str]]:
+    ) -> tuple[str | None, list[str]]:
         """
         Recupera contexto relevante del workspace.
         
@@ -215,7 +213,7 @@ class LocalRAG:
             return None, []
         
         # Recolectar chunks con score
-        scored_chunks: List[Tuple[int, str, Path]] = []
+        scored_chunks: list[tuple[int, str, Path]] = []
         candidate_files = self._iter_candidate_files()
         
         for path in candidate_files:
@@ -249,8 +247,8 @@ class LocalRAG:
         top_chunks = scored_chunks[:max_chunks]
         
         # Construir contexto
-        context_blocks: List[str] = []
-        source_paths: List[str] = []
+        context_blocks: list[str] = []
+        source_paths: list[str] = []
         total_chars = 0
         
         for _, chunk, path in top_chunks:
@@ -285,7 +283,7 @@ class LocalRAG:
         self,
         file_path: str,
         max_chars: int = MAX_RAG_FILE_CHARS,
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Obtiene el contenido de un archivo específico.
         

@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from config import OperationMode
-
 
 # =============================================================================
 # Natural Agent Prompts (modo natural: texto libre + parser separado)
@@ -294,7 +291,7 @@ class PromptManager:
     @staticmethod
     def get_system_prompt(
         mode: str,
-        custom_instructions: Optional[str] = None,
+        custom_instructions: str | None = None,
     ) -> str:
         """Retorna el system prompt para el modo indicado."""
         prompts = {
@@ -316,7 +313,7 @@ class PromptManager:
     def build_workspace_context(
         workspace_root: str,
         current_cwd: str,
-        entries: List[str],
+        entries: list[str],
         max_entries: int = 60,
     ) -> str:
         """Construye el contexto del workspace."""
@@ -364,7 +361,7 @@ class PromptManager:
     def get_system_prompt_with_memory(
         mode: str,
         memory_context: str = "",
-        custom_instructions: Optional[str] = None,
+        custom_instructions: str | None = None,
     ) -> str:
         """Retorna system prompt con memoria inyectada."""
         base = PromptManager.get_system_prompt(mode, custom_instructions)
@@ -373,7 +370,7 @@ class PromptManager:
         return base
 
     @staticmethod
-    def get_tools_description_for_parser(extra_tools: Optional[List[str]] = None) -> str:
+    def get_tools_description_for_parser(extra_tools: list[str] | None = None) -> str:
         """Descripción compacta de tools para el prompt del parser."""
         base = _TOOLS_DESCRIPTION_FOR_PARSER
         if extra_tools:

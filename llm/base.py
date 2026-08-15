@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Iterable, List, Set
+from collections.abc import Iterable
+from typing import Any
 
 
 class LLMClientError(Exception):
@@ -15,10 +16,10 @@ class LLMProvider(ABC):
     """Contrato que deben implementar todos los providers LLM."""
 
     # Actualizado tras cada llamada con métricas de uso
-    last_usage: Dict[str, int]
+    last_usage: dict[str, int]
 
     def __init__(self) -> None:
-        self.last_usage: Dict[str, int] = {}
+        self.last_usage: dict[str, int] = {}
 
     # ------------------------------------------------------------------
     # Métodos obligatorios
@@ -28,9 +29,9 @@ class LLMProvider(ABC):
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-        fmt: str | Dict[str, Any] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        fmt: str | dict[str, Any] | None = None,
     ) -> str:
         """Chat sin streaming. Retorna el texto de la respuesta.
 
@@ -43,9 +44,9 @@ class LLMProvider(ABC):
     def chat_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-        fmt: str | Dict[str, Any] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        fmt: str | dict[str, Any] | None = None,
     ) -> Iterable[str]:
         """Chat con streaming. Yield de fragmentos de texto."""
 
@@ -53,10 +54,10 @@ class LLMProvider(ABC):
     def chat_with_tools(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         """Chat con function calling nativo.
 
         Retorna dict normalizado:
@@ -72,7 +73,7 @@ class LLMProvider(ABC):
         """
 
     @abstractmethod
-    def list_models(self) -> List[str]:
+    def list_models(self) -> list[str]:
         """Lista los modelos disponibles en este provider."""
 
     @abstractmethod
@@ -83,14 +84,14 @@ class LLMProvider(ABC):
     # Métodos opcionales con implementaciones por defecto
     # ------------------------------------------------------------------
 
-    def get_model_capabilities(self, model: str) -> Set[str]:
+    def get_model_capabilities(self, model: str) -> set[str]:
         """Retorna capacidades del modelo (p.ej. {'tools', 'vision'})."""
-        caps: Set[str] = set()
+        caps: set[str] = set()
         if self.model_supports_tools(model):
             caps.add("tools")
         return caps
 
-    def get_model_info(self, model: str) -> Dict[str, Any]:
+    def get_model_info(self, model: str) -> dict[str, Any]:
         """Información detallada del modelo (puede retornar dict vacío)."""
         return {}
 
@@ -113,8 +114,8 @@ class LLMProvider(ABC):
     def format_assistant_tool_message(
         self,
         content: str,
-        tool_calls: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        tool_calls: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Mensaje del asistente que contiene tool calls (formato normalizado)."""
         return {
             "role": "assistant",
@@ -127,16 +128,16 @@ class LLMProvider(ABC):
 
     def format_tool_result_message(
         self,
-        tool_call: Dict[str, Any],
+        tool_call: dict[str, Any],
         output: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Mensaje con el resultado de una tool (formato normalizado).
 
         Args:
             tool_call: tool call normalizado ({"id": ..., "function": {...}}).
             output: salida (o error) de la ejecución.
         """
-        msg: Dict[str, Any] = {"role": "tool", "content": output}
+        msg: dict[str, Any] = {"role": "tool", "content": output}
         name = tool_call.get("function", {}).get("name")
         if name:
             msg["tool_name"] = name

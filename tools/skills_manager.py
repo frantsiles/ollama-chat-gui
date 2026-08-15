@@ -6,8 +6,6 @@ import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional
-
 
 _FRONT_MATTER_RE = re.compile(r"\A\s*---[ \t]*\n(.*?)\n---[ \t]*\n", re.DOTALL)
 
@@ -38,7 +36,7 @@ class SkillsManager:
     # Read
     # ------------------------------------------------------------------
 
-    def list_skills(self) -> List[Skill]:
+    def list_skills(self) -> list[Skill]:
         if not self.skills_dir.exists():
             return []
         skills = []
@@ -50,7 +48,7 @@ class SkillsManager:
                 skills.append(skill)
         return skills
 
-    def get_skill(self, name: str) -> Optional[Skill]:
+    def get_skill(self, name: str) -> Skill | None:
         return self._parse_skill(self.skills_dir / name / "SKILL.md")
 
     # ------------------------------------------------------------------
@@ -65,7 +63,7 @@ class SkillsManager:
         skill_file.write_text(full, encoding="utf-8")
         return Skill(name=name, description=description, content=full, path=skill_file)
 
-    def update_skill(self, name: str, description: str, content: str) -> Optional[Skill]:
+    def update_skill(self, name: str, description: str, content: str) -> Skill | None:
         skill_file = self.skills_dir / name / "SKILL.md"
         if not skill_file.exists():
             return None
@@ -84,12 +82,12 @@ class SkillsManager:
     # Helpers
     # ------------------------------------------------------------------
 
-    def get_skill_prompt(self, name: str) -> Optional[str]:
+    def get_skill_prompt(self, name: str) -> str | None:
         """Retorna el contenido del skill para inyectar en el system prompt."""
         skill = self.get_skill(name)
         return skill.content if skill else None
 
-    def _parse_skill(self, path: Path) -> Optional[Skill]:
+    def _parse_skill(self, path: Path) -> Skill | None:
         if not path.exists():
             return None
         try:

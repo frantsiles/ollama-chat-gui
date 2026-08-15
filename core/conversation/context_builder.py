@@ -10,7 +10,7 @@ cada llamada. Esto incluye:
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from config import MAX_CONTEXT_MESSAGES, MAX_CONTEXT_MESSAGES_KEEP
 from core.models import Conversation, Message, MessageRole
@@ -69,15 +69,15 @@ class ContextBuilder:
     def build(
         self,
         conversation: Conversation,
-        system_prompt: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        system_prompt: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Construye la lista completa de mensajes para el LLM."""
         if system_prompt is None:
             system_prompt = PromptManager.get_system_prompt_with_memory(
                 self._mode, self._memory_context
             )
 
-        messages: List[Dict[str, Any]] = [
+        messages: list[dict[str, Any]] = [
             {"role": "system", "content": system_prompt}
         ]
         for msg in self._apply_window(conversation.messages):
@@ -86,7 +86,7 @@ class ContextBuilder:
 
     def build_workspace_snapshot(self) -> str:
         """Devuelve el bloque de texto con el contexto del workspace actual."""
-        entries: List[str] = []
+        entries: list[str] = []
         try:
             for item in self._current_cwd.glob("*"):
                 if len(entries) >= self._max_entries:
@@ -114,7 +114,7 @@ class ContextBuilder:
     # Internos
     # ------------------------------------------------------------------
 
-    def _apply_window(self, messages: List[Message]) -> List[Message]:
+    def _apply_window(self, messages: list[Message]) -> list[Message]:
         """Aplica ventana: si hay muchos mensajes, mantiene últimos N + sumario."""
         if len(messages) <= MAX_CONTEXT_MESSAGES_KEEP:
             return list(messages)
@@ -132,9 +132,9 @@ class ContextBuilder:
         return recent
 
     @staticmethod
-    def _build_lightweight_summary(messages: List[Message]) -> str:
+    def _build_lightweight_summary(messages: list[Message]) -> str:
         """Resumen textual ligero de mensajes antiguos (sin LLM)."""
-        parts: List[str] = []
+        parts: list[str] = []
         for msg in messages:
             if msg.role == MessageRole.USER:
                 snippet = msg.content[:300].replace("\n", " ")

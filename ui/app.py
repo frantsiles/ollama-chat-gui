@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import base64
 from pathlib import Path
-from typing import Any, List, Tuple
+from typing import Any
 
 import streamlit as st
 
 from config import (
     MAX_FILE_SIZE_BYTES,
     MAX_TEXT_CHARS_PER_FILE,
-    OperationMode,
     TEXT_FILE_EXTENSIONS,
+    OperationMode,
 )
 from core.agent import Agent
 from core.models import Conversation, Plan, ToolCall
@@ -33,9 +33,9 @@ from ui.state import AppState
 
 
 def process_attachments(
-    files: List[Any],
+    files: list[Any],
     supports_vision: bool,
-) -> Tuple[str, List[str], List[str]]:
+) -> tuple[str, list[str], list[str]]:
     """
     Procesa archivos adjuntos.
     
@@ -46,9 +46,9 @@ def process_attachments(
     Returns:
         Tupla (contexto_texto, imágenes_base64, labels)
     """
-    text_blocks: List[str] = []
-    images: List[str] = []
-    labels: List[str] = []
+    text_blocks: list[str] = []
+    images: list[str] = []
+    labels: list[str] = []
     
     for f in files:
         name = f.name
@@ -98,8 +98,8 @@ def handle_chat_mode(
     temperature: float,
     user_input: str,
     attachments_context: str,
-    images: List[str],
-    attachment_labels: List[str],
+    images: list[str],
+    attachment_labels: list[str],
 ) -> None:
     """Maneja el modo Chat."""
     # Agregar mensaje del usuario
@@ -146,8 +146,8 @@ def handle_agent_mode(
     temperature: float,
     user_input: str,
     attachments_context: str,
-    images: List[str],
-    attachment_labels: List[str],
+    images: list[str],
+    attachment_labels: list[str],
 ) -> None:
     """Maneja el modo Agent."""
     workspace_root = Path(AppState.get_workspace_root())

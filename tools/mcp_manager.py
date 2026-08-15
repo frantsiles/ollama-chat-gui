@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from tools.mcp_client import MCPClient, MCPServerConfig, MCPToolDefinition
 
@@ -20,26 +20,26 @@ class MCPManager:
         result = await manager.execute_tool("mi-servidor__herramienta", {"arg": "val"})
     """
 
-    _instance: Optional["MCPManager"] = None
+    _instance: MCPManager | None = None
 
-    def __init__(self, config_file: Optional[str] = None) -> None:
+    def __init__(self, config_file: str | None = None) -> None:
         self._config_file = config_file
-        self._servers: Dict[str, MCPServerConfig] = {}
+        self._servers: dict[str, MCPServerConfig] = {}
         # Herramientas descubiertas: full_name -> MCPToolDefinition
-        self._tools: Dict[str, MCPToolDefinition] = {}
+        self._tools: dict[str, MCPToolDefinition] = {}
 
         if config_file and Path(config_file).exists():
             self._load_config(config_file)
 
     @classmethod
-    def get_instance(cls) -> "MCPManager":
+    def get_instance(cls) -> MCPManager:
         """Retorna la instancia singleton (debe inicializarse primero con init())."""
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @classmethod
-    def init(cls, config_file: str) -> "MCPManager":
+    def init(cls, config_file: str) -> MCPManager:
         """Inicializa el singleton con archivo de configuración."""
         cls._instance = cls(config_file=config_file)
         return cls._instance
@@ -50,7 +50,7 @@ class MCPManager:
 
     def _load_config(self, path: str) -> None:
         try:
-            with open(path, "r") as f:
+            with open(path) as f:
                 data = json.load(f)
             for server_data in data.get("servers", []):
                 cfg = MCPServerConfig.from_dict(server_data)
@@ -88,7 +88,7 @@ class MCPManager:
         self.save_config()
         return True
 
-    def list_servers(self) -> List[Dict[str, Any]]:
+    def list_servers(self) -> list[dict[str, Any]]:
         """Lista todos los servidores con su estado de conexión."""
         result = []
         for name, cfg in self._servers.items():
@@ -105,7 +105,7 @@ class MCPManager:
     # Connection & tool discovery
     # ------------------------------------------------------------------
 
-    async def connect_server(self, name: str) -> List[MCPToolDefinition]:
+    async def connect_server(self, name: str) -> list[MCPToolDefinition]:
         """Conecta al servidor y descubre sus herramientas."""
         cfg = self._servers.get(name)
         if not cfg:
@@ -121,9 +121,9 @@ class MCPManager:
 
         return tools
 
-    async def connect_all_enabled(self) -> Dict[str, Any]:
+    async def connect_all_enabled(self) -> dict[str, Any]:
         """Conecta a todos los servidores habilitados. Retorna resumen."""
-        summary: Dict[str, Any] = {}
+        summary: dict[str, Any] = {}
         for name, cfg in self._servers.items():
             if not cfg.enabled:
                 summary[name] = {"status": "disabled"}
@@ -139,10 +139,10 @@ class MCPManager:
     # Tool access
     # ------------------------------------------------------------------
 
-    def get_all_tools(self) -> List[MCPToolDefinition]:
+    def get_all_tools(self) -> list[MCPToolDefinition]:
         return list(self._tools.values())
 
-    def get_ollama_tools(self) -> List[Dict[str, Any]]:
+    def get_ollama_tools(self) -> list[dict[str, Any]]:
         """Retorna todas las herramientas MCP en formato Ollama function calling."""
         return [t.to_ollama_tool() for t in self._tools.values()]
 
@@ -154,7 +154,7 @@ class MCPManager:
     # Tool execution
     # ------------------------------------------------------------------
 
-    async def execute_tool(self, full_name: str, arguments: Dict[str, Any]) -> str:
+    async def execute_tool(self, full_name: str, arguments: dict[str, Any]) -> str:
         """Ejecuta una herramienta MCP identificada por su nombre completo.
 
         Args:
@@ -175,7 +175,7 @@ class MCPManager:
         except Exception as exc:
             return f"Error ejecutando '{full_name}': {exc}"
 
-    def execute_tool_sync(self, full_name: str, arguments: Dict[str, Any]) -> str:
+    def execute_tool_sync(self, full_name: str, arguments: dict[str, Any]) -> str:
         """Versión síncrona de execute_tool para usar desde código no-async."""
         try:
             loop = asyncio.get_event_loop()

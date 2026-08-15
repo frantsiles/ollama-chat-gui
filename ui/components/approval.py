@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 import streamlit as st
 
@@ -11,10 +12,10 @@ from core.models import ToolCall
 
 def render_approval_dialog(
     tool_call: ToolCall,
-    on_approve: Optional[Callable[[], None]] = None,
-    on_reject: Optional[Callable[[], None]] = None,
-    on_approve_always: Optional[Callable[[], None]] = None,
-) -> Optional[str]:
+    on_approve: Callable[[], None] | None = None,
+    on_reject: Callable[[], None] | None = None,
+    on_approve_always: Callable[[], None] | None = None,
+) -> str | None:
     """
     Renderiza el diálogo de aprobación para una acción.
     
@@ -73,11 +74,11 @@ def render_approval_dialog(
 
 
 def render_approval_from_dict(
-    approval_data: Dict[str, Any],
-    on_approve: Optional[Callable[[], None]] = None,
-    on_reject: Optional[Callable[[], None]] = None,
-    on_approve_always: Optional[Callable[[], None]] = None,
-) -> Optional[str]:
+    approval_data: dict[str, Any],
+    on_approve: Callable[[], None] | None = None,
+    on_reject: Callable[[], None] | None = None,
+    on_approve_always: Callable[[], None] | None = None,
+) -> str | None:
     """
     Renderiza el diálogo de aprobación desde un diccionario.
     
@@ -101,9 +102,9 @@ def render_approval_from_dict(
 
 def render_simple_approval(
     description: str,
-    on_approve: Optional[Callable[[], None]] = None,
-    on_reject: Optional[Callable[[], None]] = None,
-) -> Optional[bool]:
+    on_approve: Callable[[], None] | None = None,
+    on_reject: Callable[[], None] | None = None,
+) -> bool | None:
     """
     Renderiza un diálogo de aprobación simple.
     

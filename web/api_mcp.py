@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from tools.mcp_client import MCPServerConfig, MCP_AVAILABLE
+from tools.mcp_client import MCP_AVAILABLE, MCPServerConfig
 from tools.mcp_manager import MCPManager
 
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
@@ -20,21 +20,21 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 class ServerCreateRequest(BaseModel):
     name: str
     type: str = "stdio"           # "stdio" | "sse"
-    command: Optional[str] = None
-    args: List[str] = []
-    env: Dict[str, str] = {}
-    url: Optional[str] = None
+    command: str | None = None
+    args: list[str] = []
+    env: dict[str, str] = {}
+    url: str | None = None
     enabled: bool = True
     description: str = ""
 
 
 class ServerUpdateRequest(BaseModel):
-    command: Optional[str] = None
-    args: Optional[List[str]] = None
-    env: Optional[Dict[str, str]] = None
-    url: Optional[str] = None
-    enabled: Optional[bool] = None
-    description: Optional[str] = None
+    command: str | None = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
+    url: str | None = None
+    enabled: bool | None = None
+    description: str | None = None
 
 
 # =============================================================================
@@ -42,7 +42,7 @@ class ServerUpdateRequest(BaseModel):
 # =============================================================================
 
 @router.get("/status")
-async def mcp_status() -> Dict[str, Any]:
+async def mcp_status() -> dict[str, Any]:
     """Retorna el estado general de MCP."""
     return {
         "available": MCP_AVAILABLE,
@@ -54,14 +54,14 @@ async def mcp_status() -> Dict[str, Any]:
 
 
 @router.get("/servers")
-async def list_servers() -> List[Dict[str, Any]]:
+async def list_servers() -> list[dict[str, Any]]:
     """Lista todos los servidores MCP configurados."""
     manager = MCPManager.get_instance()
     return manager.list_servers()
 
 
 @router.post("/servers")
-async def add_server(req: ServerCreateRequest) -> Dict[str, Any]:
+async def add_server(req: ServerCreateRequest) -> dict[str, Any]:
     """Agrega un nuevo servidor MCP."""
     manager = MCPManager.get_instance()
     cfg = MCPServerConfig(
@@ -79,7 +79,7 @@ async def add_server(req: ServerCreateRequest) -> Dict[str, Any]:
 
 
 @router.patch("/servers/{name}")
-async def update_server(name: str, req: ServerUpdateRequest) -> Dict[str, Any]:
+async def update_server(name: str, req: ServerUpdateRequest) -> dict[str, Any]:
     """Actualiza la configuración de un servidor existente."""
     manager = MCPManager.get_instance()
     servers = {s["name"]: s for s in manager.list_servers()}
@@ -105,7 +105,7 @@ async def update_server(name: str, req: ServerUpdateRequest) -> Dict[str, Any]:
 
 
 @router.delete("/servers/{name}")
-async def remove_server(name: str) -> Dict[str, Any]:
+async def remove_server(name: str) -> dict[str, Any]:
     """Elimina un servidor MCP y sus herramientas."""
     manager = MCPManager.get_instance()
     if not manager.remove_server(name):
@@ -114,7 +114,7 @@ async def remove_server(name: str) -> Dict[str, Any]:
 
 
 @router.post("/servers/{name}/connect")
-async def connect_server(name: str) -> Dict[str, Any]:
+async def connect_server(name: str) -> dict[str, Any]:
     """Conecta al servidor y descubre sus herramientas."""
     if not MCP_AVAILABLE:
         raise HTTPException(
@@ -137,7 +137,7 @@ async def connect_server(name: str) -> Dict[str, Any]:
 
 
 @router.post("/connect-all")
-async def connect_all_servers() -> Dict[str, Any]:
+async def connect_all_servers() -> dict[str, Any]:
     """Conecta a todos los servidores habilitados."""
     if not MCP_AVAILABLE:
         raise HTTPException(
@@ -150,14 +150,14 @@ async def connect_all_servers() -> Dict[str, Any]:
 
 
 @router.get("/tools")
-async def list_tools() -> List[Dict[str, Any]]:
+async def list_tools() -> list[dict[str, Any]]:
     """Lista todas las herramientas descubiertas en todos los servidores conectados."""
     manager = MCPManager.get_instance()
     return [t.to_dict() for t in manager.get_all_tools()]
 
 
 @router.post("/tools/{full_name}/execute")
-async def execute_tool(full_name: str, arguments: Dict[str, Any] = {}) -> Dict[str, Any]:
+async def execute_tool(full_name: str, arguments: dict[str, Any] = {}) -> dict[str, Any]:
     """Ejecuta una herramienta MCP manualmente (para pruebas).
 
     full_name debe tener formato 'servidor__herramienta'.

@@ -6,7 +6,12 @@ target-version = "py311"
 # Selección explícita para que CI sea reproducible: sin esto se aplica el set
 # por defecto de la versión de ruff instalada, que cambia entre releases y
 # rompe el build sin que nadie haya tocado el código.
-select = ["E4", "E7", "E9", "F"]
+select = ["E4", "E7", "E9", "F", "I", "UP"]
+
+# UP042 convertiría los enums `(str, Enum)` a `StrEnum`. No es equivalente:
+# str(miembro) pasa de "Clase.MIEMBRO" al valor, y esos enums se serializan a
+# SQLite y JSON, así que el cambio corrompería sesiones ya guardadas.
+ignore = ["UP042"]
 
 [tool.pytest.ini_options]
 markers = [

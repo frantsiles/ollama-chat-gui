@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Set
+from collections.abc import Iterable
+from typing import Any
 
 import requests
 
@@ -27,7 +28,7 @@ class OllamaProvider(LLMProvider):
     # Listado y capacidades
     # ------------------------------------------------------------------
 
-    def list_models(self) -> List[str]:
+    def list_models(self) -> list[str]:
         url = f"{self.base_url}/api/tags"
         try:
             response = requests.get(url, timeout=self.timeout)
@@ -39,7 +40,7 @@ class OllamaProvider(LLMProvider):
         data = response.json()
         return [item["name"] for item in data.get("models", []) if "name" in item]
 
-    def get_model_capabilities(self, model: str) -> Set[str]:
+    def get_model_capabilities(self, model: str) -> set[str]:
         if not model:
             return set()
         url = f"{self.base_url}/api/show"
@@ -56,7 +57,7 @@ class OllamaProvider(LLMProvider):
         except LLMClientError:
             return False
 
-    def get_model_info(self, model: str) -> Dict[str, Any]:
+    def get_model_info(self, model: str) -> dict[str, Any]:
         if not model:
             return {}
         url = f"{self.base_url}/api/show"
@@ -95,13 +96,13 @@ class OllamaProvider(LLMProvider):
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-        fmt: str | Dict[str, Any] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        fmt: str | dict[str, Any] | None = None,
     ) -> str:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
-        payload: Dict[str, Any] = {"model": model, "messages": messages, "stream": False}
+        payload: dict[str, Any] = {"model": model, "messages": messages, "stream": False}
         if options:
             payload["options"] = options
         if fmt:
@@ -150,13 +151,13 @@ class OllamaProvider(LLMProvider):
     def chat_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-        fmt: str | Dict[str, Any] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        fmt: str | dict[str, Any] | None = None,
     ) -> Iterable[str]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
-        payload: Dict[str, Any] = {"model": model, "messages": messages, "stream": True}
+        payload: dict[str, Any] = {"model": model, "messages": messages, "stream": True}
         if options:
             payload["options"] = options
         if fmt:
@@ -192,13 +193,13 @@ class OllamaProvider(LLMProvider):
     def chat_with_tools(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": model,
             "messages": messages,
             "tools": tools,

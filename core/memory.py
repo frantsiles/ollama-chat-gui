@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any
 from uuid import uuid4
 
 from config import (
@@ -40,7 +40,7 @@ class MemoryStore:
     # Workspace memories (Capa A)
     # ------------------------------------------------------------------
 
-    def get_workspace_memories(self, workspace_root: str) -> List[Dict[str, Any]]:
+    def get_workspace_memories(self, workspace_root: str) -> list[dict[str, Any]]:
         """Retorna memorias activas para un workspace."""
         if not MEMORY_ENABLED or not self._db:
             return []
@@ -69,7 +69,7 @@ class MemoryStore:
     # User profile (Capa B)
     # ------------------------------------------------------------------
 
-    def get_profile_traits(self) -> List[Dict[str, Any]]:
+    def get_profile_traits(self) -> list[dict[str, Any]]:
         """Retorna rasgos activos del perfil de usuario."""
         if not MEMORY_ENABLED or not self._db:
             return []
@@ -101,7 +101,7 @@ class MemoryStore:
         workspace_root: str,
         user_message: str,
         assistant_response: str,
-    ) -> Dict[str, List[str]]:
+    ) -> dict[str, list[str]]:
         """
         Analiza la conversación reciente y extrae memorias nuevas.
 
@@ -141,7 +141,7 @@ class MemoryStore:
             logger.debug("No se pudieron extraer memorias de la conversación")
             return {"workspace": [], "profile": []}
 
-        result: Dict[str, List[str]] = {"workspace": [], "profile": []}
+        result: dict[str, list[str]] = {"workspace": [], "profile": []}
 
         # Persistir memorias de workspace
         for item in data.get("workspace", []):
@@ -186,7 +186,7 @@ class MemoryStore:
         if not MEMORY_ENABLED:
             return ""
 
-        sections: List[str] = []
+        sections: list[str] = []
 
         # Perfil global
         traits = self.get_profile_traits()

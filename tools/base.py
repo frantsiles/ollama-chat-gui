@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class ToolError(Exception):
@@ -28,8 +28,8 @@ class ToolResult:
     """Resultado de ejecución de una herramienta."""
     success: bool
     output: str
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = None
+    error: str | None = None
+    metadata: dict[str, Any] = None
     
     def __post_init__(self):
         if self.metadata is None:
@@ -56,7 +56,7 @@ class BaseTool(ABC):
         self.current_cwd = current_cwd.resolve()
     
     @abstractmethod
-    def get_parameters(self) -> List[ToolParameter]:
+    def get_parameters(self) -> list[ToolParameter]:
         """Retorna la lista de parámetros que acepta la herramienta."""
         pass
     
@@ -70,7 +70,7 @@ class BaseTool(ABC):
         """
         pass
     
-    def validate_args(self, args: Dict[str, Any]) -> Optional[str]:
+    def validate_args(self, args: dict[str, Any]) -> str | None:
         """
         Valida los argumentos antes de ejecutar.
         
@@ -89,7 +89,7 @@ class BaseTool(ABC):
         
         return None
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serializa la definición de la herramienta."""
         return {
             "name": self.name,
@@ -107,11 +107,11 @@ class BaseTool(ABC):
             ],
         }
 
-    def to_ollama_tool(self) -> Dict[str, Any]:
+    def to_ollama_tool(self) -> dict[str, Any]:
         """Convierte la herramienta al formato de Ollama function calling."""
         params = self.get_parameters()
-        properties: Dict[str, Any] = {}
-        required: List[str] = []
+        properties: dict[str, Any] = {}
+        required: list[str] = []
         for p in params:
             properties[p.name] = {"type": p.type, "description": p.description}
             if p.required:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, List, Optional
+from typing import Any
 
 import streamlit as st
 
@@ -37,7 +37,7 @@ def render_chat_messages() -> None:
 def render_chat_input(
     placeholder: str = "Escribe tu mensaje...",
     disabled: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """
     Renderiza el input de chat.
     
@@ -53,7 +53,7 @@ def render_chat_input(
 
 def render_file_uploader(
     supports_vision: bool = False,
-) -> List[Any]:
+) -> list[Any]:
     """
     Renderiza el uploader de archivos.
     

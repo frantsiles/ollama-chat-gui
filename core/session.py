@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core.models import Conversation, Message, MessageRole
 
@@ -17,7 +17,7 @@ class SessionManager:
     Maneja múltiples conversaciones y su persistencia.
     """
     
-    def __init__(self, storage_dir: Optional[Path] = None):
+    def __init__(self, storage_dir: Path | None = None):
         """
         Inicializa el gestor de sesiones.
         
@@ -25,21 +25,21 @@ class SessionManager:
             storage_dir: Directorio para persistencia (opcional)
         """
         self.storage_dir = storage_dir
-        self._sessions: Dict[str, Conversation] = {}
-        self._active_session_id: Optional[str] = None
+        self._sessions: dict[str, Conversation] = {}
+        self._active_session_id: str | None = None
         
         if storage_dir:
             storage_dir.mkdir(parents=True, exist_ok=True)
     
     @property
-    def active_session(self) -> Optional[Conversation]:
+    def active_session(self) -> Conversation | None:
         """Retorna la sesión activa."""
         if self._active_session_id:
             return self._sessions.get(self._active_session_id)
         return None
     
     @property
-    def active_session_id(self) -> Optional[str]:
+    def active_session_id(self) -> str | None:
         """Retorna el ID de la sesión activa."""
         return self._active_session_id
     
@@ -69,7 +69,7 @@ class SessionManager:
         
         return session
     
-    def get_session(self, session_id: str) -> Optional[Conversation]:
+    def get_session(self, session_id: str) -> Conversation | None:
         """Obtiene una sesión por ID."""
         return self._sessions.get(session_id)
     
@@ -114,7 +114,7 @@ class SessionManager:
         
         return True
     
-    def list_sessions(self) -> List[Dict[str, Any]]:
+    def list_sessions(self) -> list[dict[str, Any]]:
         """
         Lista todas las sesiones.
         
@@ -133,7 +133,7 @@ class SessionManager:
             for session in self._sessions.values()
         ]
     
-    def clear_session(self, session_id: Optional[str] = None) -> bool:
+    def clear_session(self, session_id: str | None = None) -> bool:
         """
         Limpia los mensajes de una sesión.
         
@@ -151,7 +151,7 @@ class SessionManager:
         self._sessions[target_id].updated_at = datetime.now()
         return True
     
-    def save_session(self, session_id: Optional[str] = None) -> bool:
+    def save_session(self, session_id: str | None = None) -> bool:
         """
         Guarda una sesión a disco.
         
@@ -181,7 +181,7 @@ class SessionManager:
         except (OSError, TypeError):
             return False
     
-    def load_session(self, session_id: str) -> Optional[Conversation]:
+    def load_session(self, session_id: str) -> Conversation | None:
         """
         Carga una sesión desde disco.
         
@@ -263,9 +263,9 @@ class SessionManager:
     
     def export_session(
         self,
-        session_id: Optional[str] = None,
+        session_id: str | None = None,
         format: str = "json",
-    ) -> Optional[str]:
+    ) -> str | None:
         """
         Exporta una sesión a texto.
         

@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from datetime import datetime, timezone
-from typing import Any, Dict, List
+from datetime import UTC, datetime
+from typing import Any
 
 _ROLE_LABELS = {"user": "Usuario", "assistant": "Asistente"}
 _MODE_LABELS = {"chat": "Chat", "agent": "Agent", "plan": "Plan"}
@@ -22,13 +22,13 @@ def build_markdown_export(
     model: str,
     mode: str,
     created_at: str,
-    messages: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
 ) -> str:
     """Construye el contenido Markdown completo de una conversación."""
-    exported_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    exported_at = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     mode_label = _MODE_LABELS.get(mode, mode or "-")
 
-    lines: List[str] = [
+    lines: list[str] = [
         f"# {title.strip() if title and title.strip() else 'Chat sin título'}",
         "",
         f"- Modelo: {model or '-'}",
@@ -73,5 +73,5 @@ def safe_export_filename(title: str, session_id: str) -> str:
     slug = _slugify(title or "")
     if not slug:
         slug = f"chat-{session_id[:8]}"
-    date = datetime.now(timezone.utc).strftime("%Y%m%d")
+    date = datetime.now(UTC).strftime("%Y%m%d")
     return f"{slug}_{date}.md"

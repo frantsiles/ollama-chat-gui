@@ -7,8 +7,8 @@ from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from web.api import router as api_router
 from web.api_mcp import router as mcp_router
@@ -74,8 +74,8 @@ async def root():
 async def startup_event():
     """Evento de inicio."""
     from config import MCP_ENABLED, MCP_SERVERS_FILE, PERSISTENCE_DB_PATH
-    from web.state import SessionManager
     from tools.mcp_manager import MCPManager
+    from web.state import SessionManager
 
     SessionManager.init_persistence(PERSISTENCE_DB_PATH)
     print("open-agent-ia started")

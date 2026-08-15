@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import logging
 from collections import OrderedDict
-from typing import List, Optional
 
 import requests
 
@@ -25,16 +24,16 @@ class _LRUCache:
     """Caché LRU simple para vectores de embeddings."""
 
     def __init__(self, max_size: int = _LRU_MAX_SIZE) -> None:
-        self._cache: OrderedDict[str, List[float]] = OrderedDict()
+        self._cache: OrderedDict[str, list[float]] = OrderedDict()
         self._max_size = max_size
 
-    def get(self, key: str) -> Optional[List[float]]:
+    def get(self, key: str) -> list[float] | None:
         if key not in self._cache:
             return None
         self._cache.move_to_end(key)
         return self._cache[key]
 
-    def put(self, key: str, value: List[float]) -> None:
+    def put(self, key: str, value: list[float]) -> None:
         if key in self._cache:
             self._cache.move_to_end(key)
         else:
@@ -74,8 +73,8 @@ class EmbeddingClient:
         self.model = model
         self.timeout = timeout
         self._cache = _LRUCache()
-        self._available: Optional[bool] = None  # None = no comprobado todavía
-        self._dim: Optional[int] = None
+        self._available: bool | None = None  # None = no comprobado todavía
+        self._dim: int | None = None
 
     # ------------------------------------------------------------------
     # Disponibilidad
@@ -101,7 +100,7 @@ class EmbeddingClient:
         return self._available
 
     @property
-    def dim(self) -> Optional[int]:
+    def dim(self) -> int | None:
         """Dimensionalidad del vector (disponible tras primera llamada exitosa)."""
         return self._dim
 
@@ -109,7 +108,7 @@ class EmbeddingClient:
     # API
     # ------------------------------------------------------------------
 
-    def _call_api(self, text: str) -> List[float]:
+    def _call_api(self, text: str) -> list[float]:
         """Llama directamente al endpoint de Ollama (sin caché)."""
         url = f"{self.base_url}/api/embeddings"
         payload = {"model": self.model, "prompt": text}
@@ -129,7 +128,7 @@ class EmbeddingClient:
 
         return embedding
 
-    def embed(self, text: str) -> List[float]:
+    def embed(self, text: str) -> list[float]:
         """
         Genera el embedding de un texto con caché LRU.
 
@@ -160,7 +159,7 @@ class EmbeddingClient:
         self._cache.put(key, vec)
         return vec
 
-    def embed_batch(self, texts: List[str]) -> List[List[float]]:
+    def embed_batch(self, texts: list[str]) -> list[list[float]]:
         """
         Genera embeddings para una lista de textos.
         Ollama no tiene endpoint batch nativo, se itera secuencialmente.

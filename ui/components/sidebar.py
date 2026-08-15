@@ -2,16 +2,14 @@
 
 from __future__ import annotations
 
-from typing import Tuple
-
 import streamlit as st
 
-from config import ApprovalLevel, OLLAMA_DEFAULT_MODEL, OperationMode
+from config import OLLAMA_DEFAULT_MODEL, ApprovalLevel, OperationMode
 from llm.client import OllamaClient, OllamaClientError
 from ui.state import AppState
 
 
-def render_sidebar() -> Tuple[OllamaClient, str, float]:
+def render_sidebar() -> tuple[OllamaClient, str, float]:
     """
     Renderiza el sidebar con configuración.
     

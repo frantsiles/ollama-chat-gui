@@ -10,7 +10,8 @@ Activación controlada por el flag REFLECTION_ENABLED en config.
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from config import REFLECTION_ENABLED, REFLECTION_TEMPERATURE
 from core.models import Conversation
@@ -22,8 +23,8 @@ class ResponseReflector:
 
     def __init__(
         self,
-        llm_call: Callable[[List[Dict[str, Any]], float, str], str],
-        enabled: Optional[bool] = None,
+        llm_call: Callable[[list[dict[str, Any]], float, str], str],
+        enabled: bool | None = None,
     ) -> None:
         """
         Args:
@@ -37,7 +38,7 @@ class ResponseReflector:
         self,
         response: str,
         conversation: Conversation,
-        on_correction: Optional[Callable[[str], None]] = None,
+        on_correction: Callable[[str], None] | None = None,
     ) -> str:
         """Revisa la respuesta. Retorna la corregida o la original.
 

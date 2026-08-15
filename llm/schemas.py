@@ -12,13 +12,13 @@ Los providers que no soportan schema degradan automáticamente a modo
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Parser de intenciones (NaturalResponseParser, fallback LLM)
 # ---------------------------------------------------------------------------
 
-PARSER_SCHEMA: Dict[str, Any] = {
+PARSER_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "needs_tool": {"type": "boolean"},
@@ -32,7 +32,7 @@ PARSER_SCHEMA: Dict[str, Any] = {
 # Modo Plan (create_plan)
 # ---------------------------------------------------------------------------
 
-PLAN_SCHEMA: Dict[str, Any] = {
+PLAN_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "action": {"type": "string", "enum": ["create_plan"]},
@@ -66,7 +66,7 @@ PLAN_SCHEMA: Dict[str, Any] = {
 # Reflexión crítica (ResponseReflector)
 # ---------------------------------------------------------------------------
 
-REFLECTION_SCHEMA: Dict[str, Any] = {
+REFLECTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "status": {"type": "string", "enum": ["ok", "needs_fix"]},
@@ -80,7 +80,7 @@ REFLECTION_SCHEMA: Dict[str, Any] = {
 # Extracción de memorias (MemoryExtractionHook)
 # ---------------------------------------------------------------------------
 
-MEMORY_SCHEMA: Dict[str, Any] = {
+MEMORY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "workspace": {
@@ -119,7 +119,7 @@ MEMORY_SCHEMA: Dict[str, Any] = {
 # Reintento de paso fallido (PlanExecutor / STEP_RETRY_PROMPT)
 # ---------------------------------------------------------------------------
 
-STEP_RETRY_SCHEMA: Dict[str, Any] = {
+STEP_RETRY_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "strategy": {"type": "string"},

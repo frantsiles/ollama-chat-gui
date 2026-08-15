@@ -13,9 +13,10 @@ NO conoce detalles de:
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from config import MAX_AGENT_STEPS
 from core.models import (
@@ -42,9 +43,9 @@ class LoopResult:
     """Resultado de un run del bucle natural."""
     status: str                       # completed | awaiting_approval | cancelled | error | max_steps
     final_response: str = ""          # respuesta final al usuario (solo si completed)
-    tool_results: List[ToolResult] = field(default_factory=list)
-    error: Optional[str] = None
-    pending_tool_call: Optional[ToolCall] = None  # solo si awaiting_approval
+    tool_results: list[ToolResult] = field(default_factory=list)
+    error: str | None = None
+    pending_tool_call: ToolCall | None = None  # solo si awaiting_approval
 
 
 class NaturalConversationLoop:
@@ -52,10 +53,10 @@ class NaturalConversationLoop:
 
     def __init__(
         self,
-        llm_call: Callable[[List[Dict[str, Any]], Optional[str]], str],
-        build_messages: Callable[[Conversation, Optional[str]], List[Dict[str, Any]]],
-        parse_response: Callable[[str], Dict[str, Any]],
-        validate_tool_call: Callable[[ToolCall], Optional[str]],
+        llm_call: Callable[[list[dict[str, Any]], str | None], str],
+        build_messages: Callable[[Conversation, str | None], list[dict[str, Any]]],
+        parse_response: Callable[[str], dict[str, Any]],
+        validate_tool_call: Callable[[ToolCall], str | None],
         is_write_operation: Callable[[ToolCall], bool],
         requires_approval: Callable[[ToolCall, bool], bool],
         execute_tool: Callable[[ToolCall], ToolResult],
@@ -76,9 +77,9 @@ class NaturalConversationLoop:
         self,
         conversation: Conversation,
         system_prompt: str,
-        step_callback: Optional[Callable[[str], None]] = None,
-        cancel_check: Optional[Callable[[], bool]] = None,
-        max_steps: Optional[int] = None,
+        step_callback: Callable[[str], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
+        max_steps: int | None = None,
     ) -> LoopResult:
         """Ejecuta el bucle natural y retorna el resultado.
 
@@ -90,15 +91,15 @@ class NaturalConversationLoop:
             max_steps: límite de pasos; si None usa MAX_AGENT_STEPS del config.
         """
         limit = max_steps if max_steps is not None else MAX_AGENT_STEPS
-        tool_results: List[ToolResult] = []
+        tool_results: list[ToolResult] = []
         # Respuestas intermedias del asistente (solo durante este run, no se
         # persisten — son razonamiento intermedio que el usuario no necesita ver).
-        extra_messages: List[Dict[str, Any]] = []
+        extra_messages: list[dict[str, Any]] = []
         # Tool results pendientes de persistir en conversation AL TERMINAR el
         # run. Durante el run viven solo en extra_messages; persistirlos al
         # momento duplicaría cada resultado en el prompt (conversation +
         # extra_messages) y desordenaría la cronología.
-        pending_persist: List[str] = []
+        pending_persist: list[str] = []
         consecutive_empty = 0
 
         def _flush_history() -> None:

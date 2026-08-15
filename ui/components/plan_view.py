@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 import streamlit as st
 
@@ -11,9 +11,9 @@ from core.models import Plan, PlanStatus, StepStatus
 
 def render_plan_view(
     plan: Plan,
-    on_approve: Optional[Callable[[], None]] = None,
-    on_cancel: Optional[Callable[[], None]] = None,
-    on_execute: Optional[Callable[[], None]] = None,
+    on_approve: Callable[[], None] | None = None,
+    on_cancel: Callable[[], None] | None = None,
+    on_execute: Callable[[], None] | None = None,
 ) -> None:
     """
     Renderiza la vista de un plan.

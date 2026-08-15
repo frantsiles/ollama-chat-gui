@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Set
+from collections.abc import Iterable
+from typing import Any
 
 import requests
 
@@ -39,8 +40,8 @@ class OpenAICompatProvider(LLMProvider):
         self.api_key = api_key
         self.timeout = timeout
 
-    def _headers(self) -> Dict[str, str]:
-        h: Dict[str, str] = {"Content-Type": "application/json"}
+    def _headers(self) -> dict[str, str]:
+        h: dict[str, str] = {"Content-Type": "application/json"}
         if self.api_key:
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
@@ -49,7 +50,7 @@ class OpenAICompatProvider(LLMProvider):
     # Listado y capacidades
     # ------------------------------------------------------------------
 
-    def list_models(self) -> List[str]:
+    def list_models(self) -> list[str]:
         url = f"{self.base_url}/models"
         try:
             response = requests.get(url, headers=self._headers(), timeout=self.timeout)
@@ -62,8 +63,8 @@ class OpenAICompatProvider(LLMProvider):
     def model_supports_tools(self, model: str) -> bool:
         return _model_likely_supports_tools(model)
 
-    def get_model_capabilities(self, model: str) -> Set[str]:
-        caps: Set[str] = set()
+    def get_model_capabilities(self, model: str) -> set[str]:
+        caps: set[str] = set()
         if self.model_supports_tools(model):
             caps.add("tools")
         return caps
@@ -82,12 +83,12 @@ class OpenAICompatProvider(LLMProvider):
     def _build_payload(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         stream: bool,
-        options: Dict[str, Any] | None,
-        fmt: str | Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {"model": model, "messages": messages, "stream": stream}
+        options: dict[str, Any] | None,
+        fmt: str | dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"model": model, "messages": messages, "stream": stream}
         if options:
             if "temperature" in options:
                 payload["temperature"] = options["temperature"]
@@ -105,9 +106,9 @@ class OpenAICompatProvider(LLMProvider):
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-        fmt: str | Dict[str, Any] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        fmt: str | dict[str, Any] | None = None,
     ) -> str:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
@@ -148,9 +149,9 @@ class OpenAICompatProvider(LLMProvider):
     def chat_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-        fmt: str | Dict[str, Any] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        fmt: str | dict[str, Any] | None = None,
     ) -> Iterable[str]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
@@ -184,10 +185,10 @@ class OpenAICompatProvider(LLMProvider):
     def chat_with_tools(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
         payload = self._build_payload(model, messages, stream=False, options=options)
@@ -243,15 +244,15 @@ class OpenAICompatProvider(LLMProvider):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _call_id(tool_call: Dict[str, Any], index: int = 0) -> str:
+    def _call_id(tool_call: dict[str, Any], index: int = 0) -> str:
         """ID del tool call, generando uno determinista si el provider no lo dio."""
         return tool_call.get("id") or f"call_{index}_{tool_call.get('function', {}).get('name', 'tool')}"
 
     def format_assistant_tool_message(
         self,
         content: str,
-        tool_calls: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        tool_calls: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """OpenAI exige id + type y arguments serializados como string JSON."""
         calls = []
         for i, tc in enumerate(tool_calls):
@@ -264,16 +265,16 @@ class OpenAICompatProvider(LLMProvider):
                     "arguments": json.dumps(fn.get("arguments", {}) or {}),
                 },
             })
-        msg: Dict[str, Any] = {"role": "assistant", "tool_calls": calls}
+        msg: dict[str, Any] = {"role": "assistant", "tool_calls": calls}
         # OpenAI acepta content null junto a tool_calls; solo incluir si hay texto
         msg["content"] = content or None
         return msg
 
     def format_tool_result_message(
         self,
-        tool_call: Dict[str, Any],
+        tool_call: dict[str, Any],
         output: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """OpenAI exige tool_call_id que apunte al call del mensaje anterior."""
         return {
             "role": "tool",

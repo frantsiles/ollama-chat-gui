@@ -17,7 +17,8 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from llm.prompts import NATURAL_PARSER_PROMPT, PromptManager
 
@@ -64,9 +65,9 @@ def _is_safe_path(candidate: str) -> bool:
     return not candidate.startswith(_SYSTEM_PATH_PREFIXES)
 
 
-def _nearest_file_path(text: str, anchor_pos: int) -> Optional[str]:
+def _nearest_file_path(text: str, anchor_pos: int) -> str | None:
     """Path con extensión más cercano a anchor_pos."""
-    best: Optional[Tuple[int, str]] = None
+    best: tuple[int, str] | None = None
     for match in _FILE_PATH_PATTERN.finditer(text):
         candidate = match.group(1)
         if not _is_safe_path(candidate):
@@ -77,7 +78,7 @@ def _nearest_file_path(text: str, anchor_pos: int) -> Optional[str]:
     return best[1] if best else None
 
 
-def _first_file_path(text: str) -> Optional[str]:
+def _first_file_path(text: str) -> str | None:
     """Primer path con extensión válido."""
     for match in _FILE_PATH_PATTERN.finditer(text):
         candidate = match.group(1)
@@ -86,7 +87,7 @@ def _first_file_path(text: str) -> Optional[str]:
     return None
 
 
-def _extract_path_or_dir(text: str) -> Optional[str]:
+def _extract_path_or_dir(text: str) -> str | None:
     """Extrae un path entre comillas o backticks (incluye dirs sin extensión)."""
     for pattern in (_QUOTED_PATH_PATTERN, _INLINE_BACKTICK_PATTERN):
         for match in pattern.finditer(text):
@@ -114,7 +115,7 @@ class ToolHeuristic(ABC):
     tool_name: str = ""
 
     @abstractmethod
-    def match(self, response: str) -> Optional[Dict[str, Any]]:
+    def match(self, response: str) -> dict[str, Any] | None:
         """Retorna el dict de tool call si detecta intención, o None."""
 
 
@@ -153,7 +154,7 @@ class WriteFileHeuristic(ToolHeuristic):
         re.IGNORECASE,
     )
 
-    def match(self, response: str) -> Optional[Dict[str, Any]]:
+    def match(self, response: str) -> dict[str, Any] | None:
         # Escribir a disco es una operación con efectos: SOLO disparar con
         # intención explícita (incluye el patrón declarativo "he creado...",
         # que cubre al modelo fingiendo haber escrito ya). Un bloque de
@@ -198,7 +199,7 @@ class ReadFileHeuristic(ToolHeuristic):
         re.IGNORECASE,
     )
 
-    def match(self, response: str) -> Optional[Dict[str, Any]]:
+    def match(self, response: str) -> dict[str, Any] | None:
         if not self._INTENT.search(response):
             return None
 
@@ -226,7 +227,7 @@ class ListDirectoryHeuristic(ToolHeuristic):
         re.IGNORECASE,
     )
 
-    def match(self, response: str) -> Optional[Dict[str, Any]]:
+    def match(self, response: str) -> dict[str, Any] | None:
         if not self._INTENT.search(response):
             return None
 
@@ -250,7 +251,7 @@ class CreateDirectoryHeuristic(ToolHeuristic):
         re.IGNORECASE,
     )
 
-    def match(self, response: str) -> Optional[Dict[str, Any]]:
+    def match(self, response: str) -> dict[str, Any] | None:
         if not self._INTENT.search(response):
             return None
 
@@ -281,7 +282,7 @@ class SearchFilesHeuristic(ToolHeuristic):
     _GLOB_INLINE = re.compile(r'`((?:\*\*?/)?\*?\.?[\w\*\.\-/]{1,80})`')
     _GLOB_BARE = re.compile(r'(?<![\w/])(\*\*?/[\w\*\.\-]+|\*\.\w+|[\w\-]+\*\.\w+)(?![\w])')
 
-    def match(self, response: str) -> Optional[Dict[str, Any]]:
+    def match(self, response: str) -> dict[str, Any] | None:
         if not self._INTENT.search(response):
             return None
 
@@ -295,7 +296,7 @@ class SearchFilesHeuristic(ToolHeuristic):
             "args": {"pattern": pattern},
         }
 
-    def _extract_pattern(self, text: str) -> Optional[str]:
+    def _extract_pattern(self, text: str) -> str | None:
         for regex in (self._GLOB_QUOTED, self._GLOB_INLINE, self._GLOB_BARE):
             match = regex.search(text)
             if match:
@@ -336,7 +337,7 @@ class RunCommandHeuristic(ToolHeuristic):
         "./", "node", "uvicorn", "pytest", "ruff", "black",
     )
 
-    def match(self, response: str) -> Optional[Dict[str, Any]]:
+    def match(self, response: str) -> dict[str, Any] | None:
         # Fast-path: explicit "comando: `...`" label (system prompt–guided format)
         label = self._LABEL.search(response)
         if label:
@@ -357,7 +358,7 @@ class RunCommandHeuristic(ToolHeuristic):
             "args": {"command": command},
         }
 
-    def _extract_command(self, text: str) -> Optional[str]:
+    def _extract_command(self, text: str) -> str | None:
         # 1. Bloque de código bash/shell explícito
         block = _BASH_BLOCK_PATTERN.search(text)
         if block:
@@ -403,7 +404,7 @@ class ExecutePythonHeuristic(ToolHeuristic):
         re.IGNORECASE,
     )
 
-    def match(self, response: str) -> Optional[Dict[str, Any]]:
+    def match(self, response: str) -> dict[str, Any] | None:
         if not self._INTENT.search(response):
             return None
 
@@ -428,7 +429,7 @@ class ExecutePythonHeuristic(ToolHeuristic):
 # van primero para evitar falsos positivos en heurísticas más laxas.
 # ---------------------------------------------------------------------------
 
-DEFAULT_HEURISTICS: List[ToolHeuristic] = [
+DEFAULT_HEURISTICS: list[ToolHeuristic] = [
     WriteFileHeuristic(),
     ExecutePythonHeuristic(),
     RunCommandHeuristic(),
@@ -459,9 +460,9 @@ class NaturalResponseParser:
 
     def __init__(
         self,
-        llm_call: Callable[[List[Dict[str, Any]], Optional[str]], str],
-        dynamic_tool_names: Optional[List[str]] = None,
-        extra_heuristics: Optional[List[ToolHeuristic]] = None,
+        llm_call: Callable[[list[dict[str, Any]], str | None], str],
+        dynamic_tool_names: list[str] | None = None,
+        extra_heuristics: list[ToolHeuristic] | None = None,
     ) -> None:
         """
         Args:
@@ -474,12 +475,12 @@ class NaturalResponseParser:
         """
         self._llm_call = llm_call
         self._dynamic_tool_names = dynamic_tool_names or []
-        self._heuristics: List[ToolHeuristic] = list(DEFAULT_HEURISTICS)
+        self._heuristics: list[ToolHeuristic] = list(DEFAULT_HEURISTICS)
         if extra_heuristics:
             self._heuristics.extend(extra_heuristics)
-        self._parser_prompt: Optional[str] = None
+        self._parser_prompt: str | None = None
 
-    def parse(self, response: str) -> Dict[str, Any]:
+    def parse(self, response: str) -> dict[str, Any]:
         """Analiza una respuesta y retorna la intención detectada.
 
         Returns:
@@ -514,7 +515,7 @@ class NaturalResponseParser:
     # Inline JSON
     # ------------------------------------------------------------------
 
-    def _extract_inline_json_tool(self, response: str) -> Optional[Dict[str, Any]]:
+    def _extract_inline_json_tool(self, response: str) -> dict[str, Any] | None:
         """Detecta si el modelo embebió un JSON de tool call directamente.
 
         Walk brace-by-brace para soportar objetos anidados (e.g. {"args": {...}}).
@@ -554,7 +555,7 @@ class NaturalResponseParser:
     # Fallback LLM
     # ------------------------------------------------------------------
 
-    def _llm_parse(self, response: str) -> Dict[str, Any]:
+    def _llm_parse(self, response: str) -> dict[str, Any]:
         """Delega al modelo secundario cuando ninguna heurística detectó nada."""
         from llm.schemas import PARSER_SCHEMA
 
@@ -580,7 +581,7 @@ class NaturalResponseParser:
     def _get_parser_prompt(self) -> str:
         """Construye y cachea el prompt del parser (estático tras __init__)."""
         if self._parser_prompt is None:
-            extra: List[str] = [
+            extra: list[str] = [
                 f"{name}(...) → herramienta dinámica registrada"
                 for name in self._dynamic_tool_names
             ]

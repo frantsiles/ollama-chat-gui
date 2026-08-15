@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 from uuid import uuid4
 
 from config import ApprovalLevel
@@ -24,12 +24,12 @@ class ApprovalStatus(str, Enum):
 class ApprovalRequest:
     """Solicitud de aprobación para una acción."""
     id: str = field(default_factory=lambda: str(uuid4())[:8])
-    tool_call: Optional[ToolCall] = None
+    tool_call: ToolCall | None = None
     description: str = ""
     reason: str = ""
     status: ApprovalStatus = ApprovalStatus.PENDING
     created_at: datetime = field(default_factory=datetime.now)
-    resolved_at: Optional[datetime] = None
+    resolved_at: datetime | None = None
     
     def approve(self) -> None:
         """Aprueba la solicitud."""
@@ -54,7 +54,7 @@ class ApprovalRequest:
     def is_approved(self) -> bool:
         return self.status in (ApprovalStatus.APPROVED, ApprovalStatus.ALWAYS_APPROVED)
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "id": self.id,
             "tool_call": self.tool_call.to_dict() if self.tool_call else None,
@@ -83,11 +83,11 @@ class ApprovalManager:
         """
         self.level = level
         self._always_approved_tools: set[str] = set()
-        self._pending_request: Optional[ApprovalRequest] = None
-        self._history: List[ApprovalRequest] = []
+        self._pending_request: ApprovalRequest | None = None
+        self._history: list[ApprovalRequest] = []
     
     @property
-    def pending_request(self) -> Optional[ApprovalRequest]:
+    def pending_request(self) -> ApprovalRequest | None:
         """Retorna la solicitud pendiente actual."""
         return self._pending_request
     
@@ -128,7 +128,7 @@ class ApprovalManager:
     def request_approval(
         self,
         tool_call: ToolCall,
-        description: Optional[str] = None,
+        description: str | None = None,
         reason: str = "",
     ) -> ApprovalRequest:
         """
@@ -154,7 +154,7 @@ class ApprovalManager:
         self._pending_request = request
         return request
     
-    def resolve_pending(self, status: ApprovalStatus) -> Optional[ApprovalRequest]:
+    def resolve_pending(self, status: ApprovalStatus) -> ApprovalRequest | None:
         """
         Resuelve la solicitud pendiente.
         
@@ -183,15 +183,15 @@ class ApprovalManager:
         
         return request
     
-    def approve_pending(self) -> Optional[ApprovalRequest]:
+    def approve_pending(self) -> ApprovalRequest | None:
         """Aprueba la solicitud pendiente."""
         return self.resolve_pending(ApprovalStatus.APPROVED)
     
-    def reject_pending(self) -> Optional[ApprovalRequest]:
+    def reject_pending(self) -> ApprovalRequest | None:
         """Rechaza la solicitud pendiente."""
         return self.resolve_pending(ApprovalStatus.REJECTED)
     
-    def approve_always(self) -> Optional[ApprovalRequest]:
+    def approve_always(self) -> ApprovalRequest | None:
         """Aprueba permanentemente la solicitud pendiente."""
         return self.resolve_pending(ApprovalStatus.ALWAYS_APPROVED)
     
@@ -209,6 +209,6 @@ class ApprovalManager:
         """Cambia el nivel de aprobación."""
         self.level = level
     
-    def get_history(self) -> List[ApprovalRequest]:
+    def get_history(self) -> list[ApprovalRequest]:
         """Retorna el historial de aprobaciones."""
         return list(self._history)

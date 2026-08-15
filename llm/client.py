@@ -5,8 +5,8 @@ from __future__ import annotations
 from config import (
     ANTHROPIC_API_KEY,
     ANTHROPIC_BASE_URL,
-    LM_STUDIO_BASE_URL,
     LLM_PROVIDER,
+    LM_STUDIO_BASE_URL,
     OLLAMA_BASE_URL,
     OLLAMA_TIMEOUT,
     OPENAI_API_KEY,

@@ -9,7 +9,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Deque, Dict, List
+from typing import Any
 
 
 @dataclass
@@ -50,7 +50,7 @@ class MetricsCollector:
         metric.finish(response.status)
     """
 
-    _metrics: Deque[RequestMetric] = deque(maxlen=200)
+    _metrics: deque[RequestMetric] = deque(maxlen=200)
 
     @classmethod
     def start(cls, session_id: str, mode: str) -> RequestMetric:
@@ -60,9 +60,9 @@ class MetricsCollector:
         return m
 
     @classmethod
-    def summary(cls) -> Dict[str, Any]:
+    def summary(cls) -> dict[str, Any]:
         """Devuelve un resumen agregado de las métricas registradas."""
-        all_m: List[RequestMetric] = list(cls._metrics)
+        all_m: list[RequestMetric] = list(cls._metrics)
         running = [m for m in all_m if m.status == "running"]
         done = [m for m in all_m if m.status != "running"]
 

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Set
+from collections.abc import Iterable
+from typing import Any
 
 import requests
 
@@ -23,14 +24,14 @@ _ANTHROPIC_API_VERSION = "2023-06-01"
 _DEFAULT_MAX_TOKENS = 4096
 
 
-def _extract_system(messages: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
+def _extract_system(messages: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     """Separa los system messages de los demás (Anthropic requiere param separado).
 
     Concatena TODOS los system messages (prompt principal + contexto de
     workspace + tool results persistidos) — quedarse solo con el último
     haría perder el prompt principal.
     """
-    system_parts: List[str] = []
+    system_parts: list[str] = []
     rest = []
     for msg in messages:
         if msg.get("role") == "system":
@@ -42,7 +43,7 @@ def _extract_system(messages: List[Dict[str, Any]]) -> tuple[str, List[Dict[str,
     return "\n\n".join(system_parts), rest
 
 
-def _convert_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convierte herramientas de formato OpenAI a formato Anthropic."""
     result = []
     for tool in tools:
@@ -73,7 +74,7 @@ class AnthropicProvider(LLMProvider):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {
             "x-api-key": self.api_key,
             "anthropic-version": _ANTHROPIC_API_VERSION,
@@ -84,7 +85,7 @@ class AnthropicProvider(LLMProvider):
     # Listado y capacidades
     # ------------------------------------------------------------------
 
-    def list_models(self) -> List[str]:
+    def list_models(self) -> list[str]:
         """Intenta listar modelos vía API; si falla, retorna lista estática."""
         try:
             url = f"{self.base_url}/v1/models"
@@ -100,7 +101,7 @@ class AnthropicProvider(LLMProvider):
         # Todos los modelos Claude 3+ soportan tools
         return True
 
-    def get_model_capabilities(self, model: str) -> Set[str]:
+    def get_model_capabilities(self, model: str) -> set[str]:
         return {"tools", "vision"}
 
     def is_available(self) -> bool:
@@ -121,15 +122,15 @@ class AnthropicProvider(LLMProvider):
     def chat(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-        fmt: str | Dict[str, Any] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        fmt: str | dict[str, Any] | None = None,
     ) -> str:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
 
         system, msgs = _extract_system(messages)
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": model,
             "max_tokens": _DEFAULT_MAX_TOKENS,
             "messages": msgs,
@@ -170,15 +171,15 @@ class AnthropicProvider(LLMProvider):
     def chat_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-        fmt: str | Dict[str, Any] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+        fmt: str | dict[str, Any] | None = None,
     ) -> Iterable[str]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
 
         system, msgs = _extract_system(messages)
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": model,
             "max_tokens": _DEFAULT_MAX_TOKENS,
             "messages": msgs,
@@ -218,15 +219,15 @@ class AnthropicProvider(LLMProvider):
     def chat_with_tools(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: List[Dict[str, Any]],
-        options: Dict[str, Any] | None = None,
-    ) -> Dict[str, Any]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        options: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
 
         system, msgs = _extract_system(messages)
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": model,
             "max_tokens": _DEFAULT_MAX_TOKENS,
             "messages": msgs,
@@ -286,10 +287,10 @@ class AnthropicProvider(LLMProvider):
     def format_assistant_tool_message(
         self,
         content: str,
-        tool_calls: List[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        tool_calls: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """Anthropic representa los tool calls como bloques tool_use."""
-        blocks: List[Dict[str, Any]] = []
+        blocks: list[dict[str, Any]] = []
         if content:
             blocks.append({"type": "text", "text": content})
         for i, tc in enumerate(tool_calls):
@@ -304,9 +305,9 @@ class AnthropicProvider(LLMProvider):
 
     def format_tool_result_message(
         self,
-        tool_call: Dict[str, Any],
+        tool_call: dict[str, Any],
         output: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Anthropic espera el resultado como bloque tool_result en un mensaje user."""
         fn = tool_call.get("function", {})
         return {

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Iterable, List, Set
+from collections.abc import Iterable
+from typing import Any
 
 import requests
 
@@ -15,7 +16,7 @@ class OllamaClient:
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 
-    def list_models(self) -> List[str]:
+    def list_models(self) -> list[str]:
         url = f"{self.base_url}/api/tags"
         try:
             response = requests.get(url, timeout=self.timeout)
@@ -28,7 +29,7 @@ class OllamaClient:
         data = response.json()
         return [item["name"] for item in data.get("models", []) if "name" in item]
 
-    def get_model_capabilities(self, model: str) -> Set[str]:
+    def get_model_capabilities(self, model: str) -> set[str]:
         if not model:
             return set()
 
@@ -45,8 +46,8 @@ class OllamaClient:
     def chat_stream(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        options: Dict[str, float] | None = None,
+        messages: list[dict[str, Any]],
+        options: dict[str, float] | None = None,
     ) -> Iterable[str]:
         if not model:
             raise OllamaClientError("Debes seleccionar o indicar un modelo.")

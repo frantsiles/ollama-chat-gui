@@ -12,7 +12,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from config import CHROMA_DB_PATH
 
@@ -28,8 +28,8 @@ class Chunk:
     """Un fragmento de texto con su embedding y metadatos."""
     id: str
     text: str
-    embedding: List[float]
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    embedding: list[float]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -38,7 +38,7 @@ class QueryResult:
     chunk_id: str
     text: str
     score: float          # similitud cosine (0-1, 1 = idéntico)
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -71,14 +71,14 @@ class VectorStore:
     def __init__(
         self,
         persist_dir: Path = CHROMA_DB_PATH,
-        workspace_root: Optional[str] = None,
+        workspace_root: str | None = None,
     ) -> None:
         self._persist_dir = persist_dir
         self._workspace_root = workspace_root
         self._client = None
         self._ws_collection = None
         self._kb_collection = None
-        self._available: Optional[bool] = None
+        self._available: bool | None = None
 
     # ------------------------------------------------------------------
     # Inicialización lazy
@@ -134,7 +134,7 @@ class VectorStore:
     # Operaciones sobre workspace
     # ------------------------------------------------------------------
 
-    def upsert_chunks(self, chunks: List[Chunk], target: str = "workspace") -> int:
+    def upsert_chunks(self, chunks: list[Chunk], target: str = "workspace") -> int:
         """
         Inserta o actualiza chunks en la colección indicada.
 
@@ -194,11 +194,11 @@ class VectorStore:
 
     def query(
         self,
-        embedding: List[float],
+        embedding: list[float],
         top_k: int = 6,
         target: str = "workspace",
-        where: Optional[Dict[str, Any]] = None,
-    ) -> List[QueryResult]:
+        where: dict[str, Any] | None = None,
+    ) -> list[QueryResult]:
         """
         Búsqueda por similitud cosine.
 
@@ -224,7 +224,7 @@ class VectorStore:
         if not collections:
             return []
 
-        results: List[QueryResult] = []
+        results: list[QueryResult] = []
 
         for collection in collections:
             try:
@@ -233,7 +233,7 @@ class VectorStore:
                     continue
 
                 actual_k = min(top_k, count)
-                kwargs: Dict[str, Any] = {
+                kwargs: dict[str, Any] = {
                     "query_embeddings": [embedding],
                     "n_results": actual_k,
                     "include": ["documents", "distances", "metadatas"],
@@ -266,7 +266,7 @@ class VectorStore:
         results.sort(key=lambda r: r.score, reverse=True)
         return results[:top_k]
 
-    def list_sources(self, target: str = "workspace") -> List[Dict[str, Any]]:
+    def list_sources(self, target: str = "workspace") -> list[dict[str, Any]]:
         """
         Lista fuentes únicas indexadas en la colección.
 
@@ -283,7 +283,7 @@ class VectorStore:
         try:
             all_items = collection.get(include=["metadatas"])
             metas = all_items.get("metadatas", [])
-            source_map: Dict[str, Dict[str, Any]] = {}
+            source_map: dict[str, dict[str, Any]] = {}
             for meta in metas:
                 if not meta:
                     continue
@@ -330,7 +330,7 @@ class VectorStore:
 # ---------------------------------------------------------------------------
 # Singleton por workspace
 # ---------------------------------------------------------------------------
-_STORE_REGISTRY: Dict[str, VectorStore] = {}
+_STORE_REGISTRY: dict[str, VectorStore] = {}
 
 
 def get_vector_store(workspace_root: str) -> VectorStore:

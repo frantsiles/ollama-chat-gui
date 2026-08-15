@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 import subprocess
+import sys
 import textwrap
-from typing import List
 
-from config import PYTHON_SANDBOX_TIMEOUT_SECONDS, MAX_COMMAND_OUTPUT_CHARS
+from config import MAX_COMMAND_OUTPUT_CHARS, PYTHON_SANDBOX_TIMEOUT_SECONDS
 from tools.base import BaseTool, ToolParameter, ToolResult
 
 
@@ -33,7 +32,7 @@ class ExecutePythonTool(BaseTool):
         super().__init__(**kwargs)
         self.timeout: int = PYTHON_SANDBOX_TIMEOUT_SECONDS
 
-    def get_parameters(self) -> List[ToolParameter]:
+    def get_parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
                 name="code",

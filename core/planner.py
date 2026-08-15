@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from config import MAX_PLAN_STEPS, OperationMode
 from core.models import (
@@ -17,7 +17,6 @@ from core.models import (
 )
 from llm.client import OllamaClient, OllamaClientError
 from llm.prompts import PromptManager
-
 
 # Patrón para extraer JSON de plan
 PLAN_JSON_PATTERN = re.compile(
@@ -54,11 +53,11 @@ class PlanManager:
         self.client = client
         self.model = model
         self.temperature = temperature
-        self._current_plan: Optional[Plan] = None
-        self._plan_history: List[Plan] = []
+        self._current_plan: Plan | None = None
+        self._plan_history: list[Plan] = []
     
     @property
-    def current_plan(self) -> Optional[Plan]:
+    def current_plan(self) -> Plan | None:
         """Retorna el plan actual."""
         return self._current_plan
     
@@ -74,7 +73,7 @@ class PlanManager:
             )
         )
     
-    def _call_model(self, messages: List[Dict[str, Any]]) -> str:
+    def _call_model(self, messages: list[dict[str, Any]]) -> str:
         """Llama al modelo forzando el schema del plan (structured outputs).
 
         Los providers sin soporte de schema degradan a JSON legacy; el
@@ -102,7 +101,7 @@ class PlanManager:
         return cleaned
 
     @staticmethod
-    def _try_parse(text: str) -> Optional[Dict[str, Any]]:
+    def _try_parse(text: str) -> dict[str, Any] | None:
         """Intenta parsear JSON, con fallback tras sanitizar."""
         for candidate in (text, PlanManager._sanitize_json_str(text)):
             try:
@@ -113,7 +112,7 @@ class PlanManager:
                 continue
         return None
 
-    def _extract_plan_from_response(self, response: str) -> Optional[Dict[str, Any]]:
+    def _extract_plan_from_response(self, response: str) -> dict[str, Any] | None:
         """Extrae un plan del texto de respuesta."""
         # 1. Extraer bloque ```json ... ``` si existe
         md_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response, re.DOTALL | re.IGNORECASE)
@@ -158,8 +157,8 @@ class PlanManager:
         self,
         user_request: str,
         conversation: Conversation,
-        context: Optional[str] = None,
-    ) -> Optional[Plan]:
+        context: str | None = None,
+    ) -> Plan | None:
         """
         Crea un plan basado en la solicitud del usuario.
         
@@ -258,10 +257,10 @@ class PlanManager:
     def update_step(
         self,
         step_id: int,
-        description: Optional[str] = None,
-        tool: Optional[str] = None,
-        args: Optional[Dict[str, Any]] = None,
-        requires_approval: Optional[bool] = None,
+        description: str | None = None,
+        tool: str | None = None,
+        args: dict[str, Any] | None = None,
+        requires_approval: bool | None = None,
     ) -> bool:
         """
         Actualiza un paso del plan.
@@ -298,11 +297,11 @@ class PlanManager:
     def add_step(
         self,
         description: str,
-        tool: Optional[str] = None,
-        args: Optional[Dict[str, Any]] = None,
+        tool: str | None = None,
+        args: dict[str, Any] | None = None,
         requires_approval: bool = False,
-        after_step_id: Optional[int] = None,
-    ) -> Optional[PlanStep]:
+        after_step_id: int | None = None,
+    ) -> PlanStep | None:
         """
         Agrega un paso al plan.
         
@@ -385,7 +384,7 @@ class PlanManager:
             self._plan_history.append(self._current_plan)
             self._current_plan = None
     
-    def get_plan_history(self) -> List[Plan]:
+    def get_plan_history(self) -> list[Plan]:
         """Retorna el historial de planes."""
         return list(self._plan_history)
     

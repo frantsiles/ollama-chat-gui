@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 import re
 from pathlib import Path
-from typing import List, Optional, Tuple
 
 from config import BLOCKED_COMMAND_PATTERNS
 
@@ -34,7 +33,7 @@ class Sandbox:
         """
         self.workspace_root = workspace_root.resolve()
     
-    def validate_path(self, target: str, base_dir: Optional[Path] = None) -> Path:
+    def validate_path(self, target: str, base_dir: Path | None = None) -> Path:
         """
         Valida y resuelve una ruta dentro del workspace.
         
@@ -73,7 +72,7 @@ class Sandbox:
         
         return resolved
     
-    def validate_command(self, command: str) -> Tuple[bool, Optional[str]]:
+    def validate_command(self, command: str) -> tuple[bool, str | None]:
         """
         Valida un comando por seguridad.
         
@@ -119,8 +118,8 @@ class Sandbox:
         self,
         directory: Path,
         max_entries: int = 100,
-        ignored_patterns: Optional[List[str]] = None,
-    ) -> List[str]:
+        ignored_patterns: list[str] | None = None,
+    ) -> list[str]:
         """
         Lista entradas de un directorio de forma segura.
         

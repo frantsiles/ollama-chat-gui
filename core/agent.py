@@ -11,12 +11,12 @@ Esta clase es deliberadamente delgada — la lógica de bajo nivel vive en:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from config import MAX_AGENT_STEPS, OperationMode
-from llm.prompts import PromptManager
 from core.models import (
     AgentState,
     Conversation,
@@ -25,6 +25,7 @@ from core.models import (
     ToolResult,
 )
 from llm.base import LLMClientError, LLMProvider
+from llm.prompts import PromptManager
 from security.approval import ApprovalManager
 from tools.registry import ToolRegistry
 
@@ -36,12 +37,12 @@ class AgentResponse:
     """Respuesta del agente."""
     content: str
     status: str  # completed, awaiting_approval, max_steps, error
-    tool_results: List[ToolResult] = field(default_factory=list)
-    plan: Optional[Plan] = None
-    error: Optional[str] = None
-    trace: List[str] = field(default_factory=list)
-    new_cwd: Optional[str] = None
-    token_usage: Optional[Dict[str, int]] = None
+    tool_results: list[ToolResult] = field(default_factory=list)
+    plan: Plan | None = None
+    error: str | None = None
+    trace: list[str] = field(default_factory=list)
+    new_cwd: str | None = None
+    token_usage: dict[str, int] | None = None
 
 
 class Agent:
@@ -59,7 +60,7 @@ class Agent:
         client: LLMProvider,
         model: str,
         workspace_root: Path,
-        current_cwd: Optional[Path] = None,
+        current_cwd: Path | None = None,
         temperature: float = 0.7,
         mode: str = OperationMode.AGENT,
     ):
@@ -93,13 +94,13 @@ class Agent:
         # Memory context string injected into system prompt
         self._memory_context: str = ""
         # Optional MemoryStore for auto-extraction
-        self._memory_store: Optional[Any] = None
+        self._memory_store: Any | None = None
         # Límite de pasos por sesión (sobreescribe MAX_AGENT_STEPS del config)
-        self._max_agent_steps: Optional[int] = None
+        self._max_agent_steps: int | None = None
         # Instrucciones personalizadas del usuario (añadidas al system prompt)
         self._custom_instructions: str = ""
         # Acumulador de tokens para la sesión actual
-        self._token_usage: Dict[str, int] = {
+        self._token_usage: dict[str, int] = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
             "total_tokens": 0,
@@ -169,10 +170,10 @@ class Agent:
     
     def _call_model(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         stream: bool = False,
-        fmt: Optional[Any] = None,
-        temperature: Optional[float] = None,
+        fmt: Any | None = None,
+        temperature: float | None = None,
     ) -> str:
         """Llama al modelo y retorna la respuesta.
 
@@ -223,8 +224,8 @@ class Agent:
     def _build_messages(
         self,
         conversation: Conversation,
-        system_prompt: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        system_prompt: str | None = None,
+    ) -> list[dict[str, Any]]:
         """Delega al ContextBuilder."""
         # Mantener sincronizadas las propiedades mutables
         self._context_builder.set_mode(self.mode)
@@ -244,7 +245,7 @@ class Agent:
         snapshot = self._context_builder.build_workspace_snapshot()
         conversation.add_system_message(snapshot)
     
-    def _repair_tool_call(self, raw_response: str) -> Optional[ToolCall]:
+    def _repair_tool_call(self, raw_response: str) -> ToolCall | None:
         """Intenta reparar una respuesta de tool call malformada."""
         repair_messages = [
             {"role": "system", "content": PromptManager.get_tool_repair_prompt()},
@@ -351,7 +352,7 @@ class Agent:
     # Parser de respuestas naturales (delegado a NaturalResponseParser)
     # ------------------------------------------------------------------
 
-    def _parse_natural_response(self, response: str) -> Dict[str, Any]:
+    def _parse_natural_response(self, response: str) -> dict[str, Any]:
         """Delega al NaturalResponseParser inyectado en el constructor."""
         return self._response_parser.parse(response)
 
@@ -401,7 +402,7 @@ class Agent:
         if cached and cached[0] is self._memory_store and cached[1] == str(self.workspace_root):
             return cached[2]
 
-        def llm_call(messages: List[Dict[str, Any]]) -> str:
+        def llm_call(messages: list[dict[str, Any]]) -> str:
             from llm.schemas import MEMORY_SCHEMA
 
             return self.client.chat(
@@ -427,8 +428,8 @@ class Agent:
         self,
         user_input: str,
         conversation: Conversation,
-        attachments: Optional[List[str]] = None,
-        images: Optional[List[str]] = None,
+        attachments: list[str] | None = None,
+        images: list[str] | None = None,
     ) -> AgentResponse:
         """
         Modo CHAT: Conversación simple sin herramientas.
@@ -490,10 +491,10 @@ class Agent:
         self,
         user_input: str,
         conversation: Conversation,
-        attachments: Optional[List[str]] = None,
-        images: Optional[List[str]] = None,
-        step_callback: Optional[Callable[[str], None]] = None,
-        cancel_check: Optional[Callable[[], bool]] = None,
+        attachments: list[str] | None = None,
+        images: list[str] | None = None,
+        step_callback: Callable[[str], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> AgentResponse:
         """Modo AGENT: enruta entre fast-path conversacional o ciclo natural."""
         from core.conversation.router import ConversationRouter
@@ -573,7 +574,7 @@ class Agent:
     def _model_supports_tools(self) -> bool:
         """Verifica si el modelo activo soporta native tool calling (resultado cacheado)."""
         if not hasattr(self, "_tools_cap_cache"):
-            self._tools_cap_cache: Dict[str, bool] = {}
+            self._tools_cap_cache: dict[str, bool] = {}
         if self.model not in self._tools_cap_cache:
             try:
                 self._tools_cap_cache[self.model] = self.client.model_supports_tools(self.model)
@@ -589,8 +590,8 @@ class Agent:
         self,
         user_input: str,
         conversation: Conversation,
-        step_callback: Optional[Callable[[str], None]] = None,
-        cancel_check: Optional[Callable[[], bool]] = None,
+        step_callback: Callable[[str], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> AgentResponse:
         """Ciclo agente usando native function calling del provider.
 
@@ -604,6 +605,7 @@ class Agent:
         Así se evita que cada resultado aparezca duplicado en el prompt.
         """
         import json as _json
+
         from llm.prompts import NATURAL_AGENT_SYSTEM_PROMPT
 
         self._context_builder.set_cwd(self.current_cwd)
@@ -619,14 +621,14 @@ class Agent:
 
         tools = self.tool_registry.get_ollama_tools()
         limit = self._max_agent_steps or MAX_AGENT_STEPS
-        tool_results: List[ToolResult] = []
+        tool_results: list[ToolResult] = []
         # Historial de tool calling de ESTE run, en formato nativo del provider.
-        extra_messages: List[Dict[str, Any]] = []
+        extra_messages: list[dict[str, Any]] = []
         # Resúmenes en texto pendientes de persistir en conversation al terminar.
-        pending_persist: List[str] = []
+        pending_persist: list[str] = []
         # Detección de bucles: cuántas veces se ejecutó cada (tool, args) y
         # cuántas correcciones anti-repetición se han inyectado ya.
-        executed_signatures: Dict[str, int] = {}
+        executed_signatures: dict[str, int] = {}
         repeat_corrections = 0
 
         def _flush_history() -> None:
@@ -635,7 +637,7 @@ class Agent:
                 conversation.add_system_message(text)
             pending_persist.clear()
 
-        def _finish(content_: str, status_: str, error_: Optional[str] = None) -> AgentResponse:
+        def _finish(content_: str, status_: str, error_: str | None = None) -> AgentResponse:
             _flush_history()
             self.state.is_running = False
             return AgentResponse(
@@ -852,7 +854,7 @@ class Agent:
         return _finish(f"Se alcanzó el límite de {limit} pasos.", "max_steps")
 
     @staticmethod
-    def _summarize_tool_activity(tool_results: List[ToolResult]) -> str:
+    def _summarize_tool_activity(tool_results: list[ToolResult]) -> str:
         """Resumen de cierre cuando se fuerza el fin del ciclo (anti-bucle)."""
         if not tool_results:
             return "Listo."
@@ -875,8 +877,8 @@ class Agent:
         self,
         user_input: str,
         conversation: Conversation,
-        step_callback: Optional[Callable[[str], None]] = None,
-        cancel_check: Optional[Callable[[], bool]] = None,
+        step_callback: Callable[[str], None] | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> AgentResponse:
         """Ciclo agente delegado a NaturalConversationLoop.
 
@@ -989,7 +991,7 @@ class Agent:
         self,
         conversation: Conversation,
         approved: bool,
-        step_callback: Optional[Callable[[str], None]] = None,
+        step_callback: Callable[[str], None] | None = None,
     ) -> AgentResponse:
         """
         Continúa la ejecución después de una aprobación.
@@ -1055,7 +1057,7 @@ class Agent:
         plan: Plan,
         conversation: Conversation,
         auto_execute: bool = False,
-        step_callback: Optional[Callable[[str, dict], None]] = None,
+        step_callback: Callable[[str, dict], None] | None = None,
     ) -> AgentResponse:
         """Delega al PlanExecutor (creado lazily)."""
         executor = self._get_plan_executor()

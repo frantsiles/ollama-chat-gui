@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import re
 
-
 # Patrones inequívocamente conversacionales (saludos, acknowledgements)
 _CONVERSATIONAL_PATTERNS = [
     re.compile(r"^(hola|hi|hey|buenos?\s+d[íi]as?|buenas?\s+(tardes?|noches?))[!.\s]*$", re.IGNORECASE),

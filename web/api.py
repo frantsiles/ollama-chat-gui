@@ -3,24 +3,24 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
-import json
-
-from fastapi import APIRouter, HTTPException, Request, UploadFile, File as FastAPIFile
+from fastapi import APIRouter, HTTPException, Request, UploadFile
+from fastapi import File as FastAPIFile
 from fastapi.responses import Response, StreamingResponse
 from pydantic import BaseModel
 
-from config import ApprovalLevel, OLLAMA_BASE_URL, OperationMode
-from llm.client import OllamaClient, OllamaClientError, create_client
+from config import OLLAMA_BASE_URL, ApprovalLevel, OperationMode
 from llm.base import LLMClientError
+from llm.client import OllamaClient, OllamaClientError, create_client
+from web.api_memory import router as memory_router
+from web.api_rag import router as rag_router
+from web.api_skills import router as skills_router
 from web.export import build_markdown_export, safe_export_filename
 from web.state import SessionManager
-from web.api_rag import router as rag_router
-from web.api_memory import router as memory_router
-from web.api_skills import router as skills_router
 
 router = APIRouter(prefix="/api", tags=["api"])
 router.include_router(rag_router)
@@ -34,23 +34,23 @@ router.include_router(skills_router)
 
 class ConfigUpdate(BaseModel):
     """Actualización de configuración."""
-    model: Optional[str] = None
-    mode: Optional[str] = None
-    temperature: Optional[float] = None
-    workspace_root: Optional[str] = None
-    approval_level: Optional[str] = None
-    llm_provider: Optional[str] = None
-    llm_base_url: Optional[str] = None
-    max_agent_steps: Optional[int] = None
-    agent_task_timeout: Optional[int] = None
-    python_sandbox_timeout: Optional[int] = None
-    system_prompt: Optional[str] = None
-    active_skill: Optional[str] = None  # "" para desactivar
+    model: str | None = None
+    mode: str | None = None
+    temperature: float | None = None
+    workspace_root: str | None = None
+    approval_level: str | None = None
+    llm_provider: str | None = None
+    llm_base_url: str | None = None
+    max_agent_steps: int | None = None
+    agent_task_timeout: int | None = None
+    python_sandbox_timeout: int | None = None
+    system_prompt: str | None = None
+    active_skill: str | None = None  # "" para desactivar
 
 
 class SessionCreate(BaseModel):
     """Crear nueva sesión."""
-    workspace_root: Optional[str] = None
+    workspace_root: str | None = None
 
 
 class ApprovalAction(BaseModel):
@@ -63,7 +63,7 @@ class ApprovalAction(BaseModel):
 # =============================================================================
 
 @router.get("/models")
-async def get_models(provider: Optional[str] = None, base_url: Optional[str] = None) -> Dict[str, Any]:
+async def get_models(provider: str | None = None, base_url: str | None = None) -> dict[str, Any]:
     """Obtiene la lista de modelos disponibles para el provider indicado."""
     try:
         client = create_client(provider=provider, base_url=base_url or None)
@@ -89,7 +89,7 @@ async def get_models(provider: Optional[str] = None, base_url: Optional[str] = N
 
 
 @router.get("/models/{model_name}/info")
-async def get_model_info(model_name: str, provider: Optional[str] = None) -> Dict[str, Any]:
+async def get_model_info(model_name: str, provider: str | None = None) -> dict[str, Any]:
     """Obtiene información detallada de un modelo."""
     try:
         client = create_client(provider=provider)
@@ -104,7 +104,7 @@ async def get_model_info(model_name: str, provider: Optional[str] = None) -> Dic
 # =============================================================================
 
 @router.post("/sessions")
-async def create_session(data: SessionCreate) -> Dict[str, Any]:
+async def create_session(data: SessionCreate) -> dict[str, Any]:
     """Crea una nueva sesión."""
     session = SessionManager.get_or_create()
     
@@ -118,7 +118,7 @@ async def create_session(data: SessionCreate) -> Dict[str, Any]:
 
 
 @router.get("/sessions/{session_id}")
-async def get_session(session_id: str) -> Dict[str, Any]:
+async def get_session(session_id: str) -> dict[str, Any]:
     """Obtiene información de una sesión."""
     session = SessionManager.get(session_id)
     if not session:
@@ -127,7 +127,7 @@ async def get_session(session_id: str) -> Dict[str, Any]:
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str) -> Dict[str, str]:
+async def delete_session(session_id: str) -> dict[str, str]:
     """Elimina una sesión."""
     if SessionManager.delete(session_id):
         return {"status": "deleted"}
@@ -135,7 +135,7 @@ async def delete_session(session_id: str) -> Dict[str, str]:
 
 
 @router.get("/sessions/{session_id}/messages")
-async def get_messages(session_id: str) -> Dict[str, Any]:
+async def get_messages(session_id: str) -> dict[str, Any]:
     """Obtiene los mensajes de una sesión."""
     session = SessionManager.get(session_id)
     if not session:
@@ -144,7 +144,7 @@ async def get_messages(session_id: str) -> Dict[str, Any]:
 
 
 @router.delete("/sessions/{session_id}/messages")
-async def clear_messages(session_id: str) -> Dict[str, str]:
+async def clear_messages(session_id: str) -> dict[str, str]:
     """Limpia los mensajes de una sesión."""
     session = SessionManager.get(session_id)
     if not session:
@@ -158,7 +158,7 @@ async def clear_messages(session_id: str) -> Dict[str, str]:
 # =============================================================================
 
 @router.get("/sessions/{session_id}/config")
-async def get_config(session_id: str) -> Dict[str, Any]:
+async def get_config(session_id: str) -> dict[str, Any]:
     """Obtiene la configuración de una sesión."""
     session = SessionManager.get(session_id)
     if not session:
@@ -183,7 +183,7 @@ async def get_config(session_id: str) -> Dict[str, Any]:
 
 
 @router.patch("/sessions/{session_id}/config")
-async def update_config(session_id: str, data: ConfigUpdate) -> Dict[str, Any]:
+async def update_config(session_id: str, data: ConfigUpdate) -> dict[str, Any]:
     """Actualiza la configuración de una sesión."""
     session = SessionManager.get(session_id)
     if not session:
@@ -228,7 +228,7 @@ async def update_config(session_id: str, data: ConfigUpdate) -> Dict[str, Any]:
 # =============================================================================
 
 @router.get("/sessions/{session_id}/approval")
-async def get_pending_approval(session_id: str) -> Dict[str, Any]:
+async def get_pending_approval(session_id: str) -> dict[str, Any]:
     """Obtiene la aprobación pendiente."""
     session = SessionManager.get(session_id)
     if not session:
@@ -237,7 +237,7 @@ async def get_pending_approval(session_id: str) -> Dict[str, Any]:
 
 
 @router.post("/sessions/{session_id}/approval")
-async def handle_approval(session_id: str, action: ApprovalAction) -> Dict[str, str]:
+async def handle_approval(session_id: str, action: ApprovalAction) -> dict[str, str]:
     """Maneja una acción de aprobación."""
     session = SessionManager.get(session_id)
     if not session:
@@ -259,14 +259,14 @@ class TitleUpdate(BaseModel):
 
 
 @router.get("/conversations")
-async def list_conversations() -> Dict[str, Any]:
+async def list_conversations() -> dict[str, Any]:
     """Lista todas las conversaciones guardadas (más recientes primero)."""
     sessions = SessionManager.list_sessions()
     return {"conversations": sessions}
 
 
 @router.delete("/conversations")
-async def delete_all_conversations() -> Dict[str, Any]:
+async def delete_all_conversations() -> dict[str, Any]:
     """Elimina TODAS las conversaciones del historial."""
     sessions = SessionManager.list_sessions()
     deleted = 0
@@ -277,7 +277,7 @@ async def delete_all_conversations() -> Dict[str, Any]:
 
 
 @router.delete("/conversations/{session_id}")
-async def delete_conversation(session_id: str) -> Dict[str, str]:
+async def delete_conversation(session_id: str) -> dict[str, str]:
     """Elimina una conversación del historial."""
     if SessionManager.delete(session_id):
         return {"status": "deleted"}
@@ -285,7 +285,7 @@ async def delete_conversation(session_id: str) -> Dict[str, str]:
 
 
 @router.patch("/conversations/{session_id}/title")
-async def update_conversation_title(session_id: str, data: TitleUpdate) -> Dict[str, Any]:
+async def update_conversation_title(session_id: str, data: TitleUpdate) -> dict[str, Any]:
     """Actualiza el título de una conversación."""
     session = SessionManager.get(session_id)
     if not session:
@@ -296,7 +296,7 @@ async def update_conversation_title(session_id: str, data: TitleUpdate) -> Dict[
 
 
 @router.get("/conversations/{session_id}/messages")
-async def get_conversation_messages(session_id: str) -> Dict[str, Any]:
+async def get_conversation_messages(session_id: str) -> dict[str, Any]:
     """Obtiene los mensajes de una conversación del historial."""
     session = SessionManager.get(session_id)
     if not session:
@@ -348,7 +348,7 @@ async def export_conversation(session_id: str, format: str = "json") -> Any:
 
 
 @router.get("/conversations/export-all")
-async def export_all_conversations() -> Dict[str, Any]:
+async def export_all_conversations() -> dict[str, Any]:
     """Exporta todas las conversaciones."""
     sessions_meta = SessionManager.list_sessions()
     conversations = []
@@ -370,7 +370,7 @@ async def export_all_conversations() -> Dict[str, Any]:
 
 
 @router.post("/conversations/import")
-async def import_conversations(request: Request) -> Dict[str, Any]:
+async def import_conversations(request: Request) -> dict[str, Any]:
     """Importa conversación(es) desde JSON exportado previamente."""
     from datetime import datetime as _dt
     try:
@@ -418,7 +418,7 @@ async def import_conversations(request: Request) -> Dict[str, Any]:
 # =============================================================================
 
 @router.get("/sessions/{session_id}/plan")
-async def get_current_plan(session_id: str) -> Dict[str, Any]:
+async def get_current_plan(session_id: str) -> dict[str, Any]:
     """Obtiene el plan actual."""
     session = SessionManager.get(session_id)
     if not session:
@@ -488,7 +488,7 @@ async def list_files(
     use_gitignore: bool = True,
     workspace: str = "",
     offset: int = 0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Lista el contenido de un directorio. Devuelve max MAX_TREE_ITEMS ítems por página."""
 
     if not path:
@@ -567,7 +567,7 @@ class DuplicateBody(BaseModel):
 
 
 @router.post("/files/create")
-async def create_file(body: FileCreateBody) -> Dict[str, Any]:
+async def create_file(body: FileCreateBody) -> dict[str, Any]:
     """Crea un nuevo archivo de texto."""
     target = _resolve_safe(body.path, body.workspace or None)
     if target.exists():
@@ -581,7 +581,7 @@ async def create_file(body: FileCreateBody) -> Dict[str, Any]:
 
 
 @router.post("/files/mkdir")
-async def create_dir(body: DirCreateBody) -> Dict[str, Any]:
+async def create_dir(body: DirCreateBody) -> dict[str, Any]:
     """Crea un nuevo directorio."""
     target = _resolve_safe(body.path, body.workspace or None)
     if target.exists():
@@ -594,7 +594,7 @@ async def create_dir(body: DirCreateBody) -> Dict[str, Any]:
 
 
 @router.post("/files/rename")
-async def rename_entry(body: RenameBody) -> Dict[str, Any]:
+async def rename_entry(body: RenameBody) -> dict[str, Any]:
     """Renombra un archivo o directorio."""
     src = _resolve_safe(body.path, body.workspace or None)
     if not src.exists():
@@ -612,7 +612,7 @@ async def rename_entry(body: RenameBody) -> Dict[str, Any]:
 
 
 @router.delete("/files/delete")
-async def delete_entry(path: str, workspace: str = "", trash: bool = True) -> Dict[str, Any]:
+async def delete_entry(path: str, workspace: str = "", trash: bool = True) -> dict[str, Any]:
     """Elimina (o mueve a la papelera) un archivo o directorio."""
     import shutil
     from datetime import datetime
@@ -644,7 +644,7 @@ async def delete_entry(path: str, workspace: str = "", trash: bool = True) -> Di
 
 
 @router.post("/files/duplicate")
-async def duplicate_entry(body: DuplicateBody) -> Dict[str, Any]:
+async def duplicate_entry(body: DuplicateBody) -> dict[str, Any]:
     """Duplica un archivo o directorio con sufijo '_copia'."""
     src = _resolve_safe(body.path, body.workspace or None)
     if not src.exists():
@@ -686,7 +686,7 @@ class MoveBody(BaseModel):
 
 
 @router.post("/files/move")
-async def move_entry(body: MoveBody) -> Dict[str, Any]:
+async def move_entry(body: MoveBody) -> dict[str, Any]:
     """Mueve un archivo o directorio a otro directorio."""
     ws = body.workspace or None
     src = _resolve_safe(body.src_path, ws)
@@ -726,7 +726,7 @@ async def upload_files(
     dir: str,
     workspace: str = "",
     files: list[UploadFile] = FastAPIFile(...),
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Sube uno o más archivos a un directorio del workspace."""
     target_dir = _resolve_safe(dir, workspace or None)
     if not target_dir.is_dir():
@@ -763,7 +763,7 @@ _IGNORE_DIRS = {'.git', 'node_modules', '__pycache__', '.venv', 'venv',
                 '.nuxt', 'coverage', '.tox'}
 
 @router.get("/files/search")
-async def search_files(path: str = "", q: str = "", workspace: str = "") -> Dict[str, Any]:
+async def search_files(path: str = "", q: str = "", workspace: str = "") -> dict[str, Any]:
     """Busca archivos por nombre (fuzzy) dentro de un directorio."""
     if not q:
         return {"items": []}
@@ -776,7 +776,7 @@ async def search_files(path: str = "", q: str = "", workspace: str = "") -> Dict
         raise HTTPException(status_code=400, detail="La ruta no es un directorio")
 
     q_lower = q.lower()
-    results: list[Dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     MAX_RESULTS = 50
 
     def _do_walk():
@@ -821,7 +821,7 @@ async def grep_files(
     q: str = "",
     case_sensitive: bool = False,
     workspace: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Busca texto en el contenido de archivos del workspace."""
     if not q:
         return {"groups": []}
@@ -845,7 +845,7 @@ async def grep_files(
     MAX_FILE_SIZE_GREP = 512 * 1024  # 512 KB per file
     MAX_MATCHES_PER_FILE = 30
     MAX_FILES = 30
-    groups: list[Dict[str, Any]] = []
+    groups: list[dict[str, Any]] = []
 
     def _is_text(p: Path) -> bool:
         mime, _ = mimetypes.guess_type(str(p))
@@ -1107,7 +1107,7 @@ _TEXT_FILENAMES: frozenset[str] = frozenset({
 
 
 @router.get("/file-content")
-async def read_file_content(path: str, workspace: str = "") -> Dict[str, Any]:
+async def read_file_content(path: str, workspace: str = "") -> dict[str, Any]:
     """Lee el contenido de un archivo de texto para el visor."""
     import mimetypes
 
@@ -1173,7 +1173,7 @@ async def _git(args: list[str], cwd: str, timeout: float = 8.0) -> tuple[int, st
         return proc.returncode, stdout.decode(errors="replace"), stderr.decode(errors="replace")
     except FileNotFoundError:
         return -1, "", "git not found"
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return -1, "", "timeout"
 
 
@@ -1191,7 +1191,7 @@ def _resolve_repo(path: str) -> Path:
 # =============================================================================
 
 @router.get("/git/status")
-async def git_status(path: str = "") -> Dict[str, Any]:
+async def git_status(path: str = "") -> dict[str, Any]:
     """Porcelain status map for tree badge overlay."""
     if not path:
         return {"files": {}, "is_git": False}
@@ -1221,7 +1221,7 @@ async def git_status(path: str = "") -> Dict[str, Any]:
 # =============================================================================
 
 @router.get("/git/info")
-async def git_info(path: str = "") -> Dict[str, Any]:
+async def git_info(path: str = "") -> dict[str, Any]:
     """Full repo info: branch, remote, user identity, ahead/behind."""
     if not path:
         return {"is_git": False}
@@ -1282,7 +1282,7 @@ async def git_info(path: str = "") -> Dict[str, Any]:
 # =============================================================================
 
 @router.get("/git/changes")
-async def git_changes(path: str = "") -> Dict[str, Any]:
+async def git_changes(path: str = "") -> dict[str, Any]:
     """Staged and unstaged changes, plus untracked files."""
     if not path:
         return {"is_git": False, "staged": [], "unstaged": [], "untracked": []}
@@ -1318,7 +1318,7 @@ async def git_changes(path: str = "") -> Dict[str, Any]:
 # =============================================================================
 
 @router.get("/git/diff")
-async def git_diff(path: str = "", file: str = "", staged: bool = False) -> Dict[str, Any]:
+async def git_diff(path: str = "", file: str = "", staged: bool = False) -> dict[str, Any]:
     """Unified diff for a single file (staged or working-tree)."""
     if not path or not file:
         raise HTTPException(status_code=400, detail="path y file requeridos")
@@ -1337,7 +1337,7 @@ async def git_diff(path: str = "", file: str = "", staged: bool = False) -> Dict
 # =============================================================================
 
 @router.get("/git/log")
-async def git_log(path: str = "", n: int = 20) -> Dict[str, Any]:
+async def git_log(path: str = "", n: int = 20) -> dict[str, Any]:
     """Recent commits."""
     if not path:
         return {"is_git": False, "commits": []}
@@ -1394,7 +1394,7 @@ class GitConfigBody(BaseModel):
 
 
 @router.post("/git/init")
-async def git_init(body: GitInitBody) -> Dict[str, Any]:
+async def git_init(body: GitInitBody) -> dict[str, Any]:
     root = _resolve_repo(body.path)
     rc, out, err = await _git(["init"], str(root))
     if rc != 0:
@@ -1403,7 +1403,7 @@ async def git_init(body: GitInitBody) -> Dict[str, Any]:
 
 
 @router.post("/git/stage")
-async def git_stage(body: GitPathBody) -> Dict[str, Any]:
+async def git_stage(body: GitPathBody) -> dict[str, Any]:
     root = _resolve_repo(body.path)
     files = body.files or ["."]
     rc, _, err = await _git(["add", "--"] + files, str(root))
@@ -1413,7 +1413,7 @@ async def git_stage(body: GitPathBody) -> Dict[str, Any]:
 
 
 @router.post("/git/unstage")
-async def git_unstage(body: GitPathBody) -> Dict[str, Any]:
+async def git_unstage(body: GitPathBody) -> dict[str, Any]:
     root = _resolve_repo(body.path)
     files = body.files or ["."]
     rc, _, err = await _git(["restore", "--staged", "--"] + files, str(root))
@@ -1423,7 +1423,7 @@ async def git_unstage(body: GitPathBody) -> Dict[str, Any]:
 
 
 @router.post("/git/discard")
-async def git_discard(body: GitPathBody) -> Dict[str, Any]:
+async def git_discard(body: GitPathBody) -> dict[str, Any]:
     """Discard working-tree changes (restore file to HEAD)."""
     root = _resolve_repo(body.path)
     files = body.files
@@ -1442,7 +1442,7 @@ class GitGenerateMsgBody(BaseModel):
 
 
 @router.post("/git/generate-commit-msg")
-async def git_generate_commit_msg(body: GitGenerateMsgBody) -> Dict[str, Any]:
+async def git_generate_commit_msg(body: GitGenerateMsgBody) -> dict[str, Any]:
     """Genera un mensaje de commit usando el LLM a partir del diff staged."""
     root = _resolve_repo(body.path)
 
@@ -1491,7 +1491,7 @@ async def git_generate_commit_msg(body: GitGenerateMsgBody) -> Dict[str, Any]:
 
 
 @router.post("/git/commit")
-async def git_commit(body: GitCommitBody) -> Dict[str, Any]:
+async def git_commit(body: GitCommitBody) -> dict[str, Any]:
     root = _resolve_repo(body.path)
     if not body.message.strip():
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacío")
@@ -1505,7 +1505,7 @@ async def git_commit(body: GitCommitBody) -> Dict[str, Any]:
 
 
 @router.post("/git/remote/add")
-async def git_remote_add(body: GitRemoteAddBody) -> Dict[str, Any]:
+async def git_remote_add(body: GitRemoteAddBody) -> dict[str, Any]:
     if not body.url:
         raise HTTPException(status_code=400, detail="URL requerida")
     root = _resolve_repo(body.path)
@@ -1516,7 +1516,7 @@ async def git_remote_add(body: GitRemoteAddBody) -> Dict[str, Any]:
 
 
 @router.post("/git/remote/set-url")
-async def git_remote_set_url(body: GitRemoteAddBody) -> Dict[str, Any]:
+async def git_remote_set_url(body: GitRemoteAddBody) -> dict[str, Any]:
     if not body.url:
         raise HTTPException(status_code=400, detail="URL requerida")
     root = _resolve_repo(body.path)
@@ -1527,7 +1527,7 @@ async def git_remote_set_url(body: GitRemoteAddBody) -> Dict[str, Any]:
 
 
 @router.post("/git/remote/remove")
-async def git_remote_remove(body: GitRemoteAddBody) -> Dict[str, Any]:
+async def git_remote_remove(body: GitRemoteAddBody) -> dict[str, Any]:
     root = _resolve_repo(body.path)
     rc, out, err = await _git(["remote", "remove", body.name], str(root))
     if rc != 0:
@@ -1536,7 +1536,7 @@ async def git_remote_remove(body: GitRemoteAddBody) -> Dict[str, Any]:
 
 
 @router.post("/git/push")
-async def git_push(body: GitPushPullBody) -> Dict[str, Any]:
+async def git_push(body: GitPushPullBody) -> dict[str, Any]:
     root = _resolve_repo(body.path)
     # Detect current branch if needed for set-upstream
     branch = body.branch
@@ -1570,7 +1570,7 @@ async def git_push(body: GitPushPullBody) -> Dict[str, Any]:
 
 
 @router.post("/git/pull")
-async def git_pull(body: GitPushPullBody) -> Dict[str, Any]:
+async def git_pull(body: GitPushPullBody) -> dict[str, Any]:
     root = _resolve_repo(body.path)
     args = ["pull", body.remote]
     if body.branch:
@@ -1589,7 +1589,7 @@ class GitHubCreateRepoBody(BaseModel):
 
 
 @router.post("/github/create-repo")
-async def github_create_repo(body: GitHubCreateRepoBody) -> Dict[str, Any]:
+async def github_create_repo(body: GitHubCreateRepoBody) -> dict[str, Any]:
     """Create a new GitHub repository using the GitHub API."""
     import httpx
     if not body.token:
@@ -1618,7 +1618,7 @@ async def github_create_repo(body: GitHubCreateRepoBody) -> Dict[str, Any]:
 
 
 @router.post("/git/config")
-async def git_config_set(body: GitConfigBody) -> Dict[str, Any]:
+async def git_config_set(body: GitConfigBody) -> dict[str, Any]:
     """Set local user.name and/or user.email."""
     root = _resolve_repo(body.path)
     updated = []
@@ -1640,7 +1640,7 @@ async def git_config_set(body: GitConfigBody) -> Dict[str, Any]:
 # =============================================================================
 
 @router.get("/health")
-async def health_check() -> Dict[str, str]:
+async def health_check() -> dict[str, str]:
     """Health check endpoint."""
     return {"status": "ok"}
 
@@ -1650,7 +1650,7 @@ async def health_check() -> Dict[str, str]:
 # =============================================================================
 
 @router.get("/metrics")
-async def get_metrics() -> Dict[str, Any]:
+async def get_metrics() -> dict[str, Any]:
     """Retorna métricas de rendimiento del agente."""
     from web.metrics import MetricsCollector
     return {"metrics": MetricsCollector.summary()}

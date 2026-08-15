@@ -5,18 +5,18 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 from uuid import uuid4
 
 from config import (
     AGENT_TASK_TIMEOUT,
-    ApprovalLevel,
     DEFAULT_WORKSPACE_ROOT,
     LLM_PROVIDER,
     MAX_AGENT_STEPS,
     OLLAMA_DEFAULT_MODEL,
-    OperationMode,
     PYTHON_SANDBOX_TIMEOUT_SECONDS,
+    ApprovalLevel,
+    OperationMode,
 )
 from core.models import Conversation, Message, MessageRole
 
@@ -39,18 +39,18 @@ class Session:
     agent_task_timeout: int = AGENT_TASK_TIMEOUT
     python_sandbox_timeout: int = PYTHON_SANDBOX_TIMEOUT_SECONDS
     system_prompt: str = ""
-    pending_approval: Optional[Dict[str, Any]] = None
-    current_plan: Optional[Dict[str, Any]] = None
-    agent_trace: List[str] = field(default_factory=list)
+    pending_approval: dict[str, Any] | None = None
+    current_plan: dict[str, Any] | None = None
+    agent_trace: list[str] = field(default_factory=list)
     # Running lightweight summary of conversation history (for context windowing)
     context_summary: str = ""
     # Skill activo — su contenido se inyecta en el system prompt del agente
-    active_skill: Optional[str] = None
+    active_skill: str | None = None
     # Título generado automáticamente del primer mensaje de usuario
     title: str = ""
     created_at: datetime = field(default_factory=datetime.now)
     
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Serializa la sesión."""
         return {
             "id": self.id,
@@ -94,7 +94,7 @@ class Session:
         self.conversation.add_message(msg)
         return msg
     
-    def get_messages_for_display(self) -> List[Dict[str, Any]]:
+    def get_messages_for_display(self) -> list[dict[str, Any]]:
         """Obtiene mensajes formateados para el frontend."""
         messages = []
         for msg in self.conversation.messages:
@@ -124,10 +124,10 @@ class SessionManager:
     Flujo de escritura: actualizar memoria + guardar en SQLite
     """
 
-    _sessions: Dict[str, Session] = {}
+    _sessions: dict[str, Session] = {}
     _db: Any = None  # PersistenceDB | None
-    _session_locks: Dict[str, Any] = {}   # session_id → asyncio.Lock
-    _cancel_flags: Dict[str, Any] = {}    # session_id → threading.Event
+    _session_locks: dict[str, Any] = {}   # session_id → asyncio.Lock
+    _cancel_flags: dict[str, Any] = {}    # session_id → threading.Event
 
     # ------------------------------------------------------------------
     # Concurrencia y cancelación
@@ -175,7 +175,7 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     @classmethod
-    def _session_to_meta(cls, session: Session) -> Dict[str, Any]:
+    def _session_to_meta(cls, session: Session) -> dict[str, Any]:
         """Extrae metadatos de una sesión para persistencia."""
         return {
             "title": session.title,
@@ -199,7 +199,7 @@ class SessionManager:
         }
 
     @classmethod
-    def _messages_to_dicts(cls, session: Session) -> List[Dict[str, Any]]:
+    def _messages_to_dicts(cls, session: Session) -> list[dict[str, Any]]:
         """Convierte los mensajes de la sesión a dicts para SQLite."""
         return [
             {
@@ -216,11 +216,11 @@ class SessionManager:
     def _reconstruct(
         cls,
         session_id: str,
-        meta: Dict[str, Any],
-        msg_dicts: List[Dict[str, Any]],
+        meta: dict[str, Any],
+        msg_dicts: list[dict[str, Any]],
     ) -> Session:
         """Reconstruye un objeto Session a partir de datos de SQLite."""
-        messages: List[Message] = []
+        messages: list[Message] = []
         for d in msg_dicts:
             try:
                 messages.append(
@@ -268,7 +268,7 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     @classmethod
-    def get_or_create(cls, session_id: Optional[str] = None) -> Session:
+    def get_or_create(cls, session_id: str | None = None) -> Session:
         """Obtiene o crea una sesión (memoria → DB → nueva)."""
         if session_id and session_id in cls._sessions:
             return cls._sessions[session_id]
@@ -288,7 +288,7 @@ class SessionManager:
         return session
 
     @classmethod
-    def get(cls, session_id: str) -> Optional[Session]:
+    def get(cls, session_id: str) -> Session | None:
         """Obtiene una sesión por ID (memoria → DB)."""
         if session_id in cls._sessions:
             return cls._sessions[session_id]
@@ -322,7 +322,7 @@ class SessionManager:
         return in_memory or in_db
 
     @classmethod
-    def list_sessions(cls) -> List[Dict[str, Any]]:
+    def list_sessions(cls) -> list[dict[str, Any]]:
         """Lista sesiones (desde DB si disponible, sino memoria)."""
         if cls._db:
             return cls._db.list_sessions()

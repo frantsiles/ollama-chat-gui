@@ -7,7 +7,7 @@ import json
 import logging
 import re as _re
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
@@ -22,8 +22,8 @@ from core.agent import Agent, AgentResponse
 from core.models import Plan, PlanStatus, ToolCall
 from core.planner import PlanManager
 from llm.client import OllamaClientError, create_client
-from web.state import Session, SessionManager
 from web.metrics import MetricsCollector
+from web.state import Session, SessionManager
 
 # Setup logger
 logger = logging.getLogger("websocket")
@@ -38,7 +38,7 @@ class ConnectionManager:
     """Gestor de conexiones WebSocket."""
     
     def __init__(self):
-        self.active_connections: Dict[str, WebSocket] = {}
+        self.active_connections: dict[str, WebSocket] = {}
     
     async def connect(self, websocket: WebSocket, session_id: str):
         """Acepta una conexión WebSocket."""
@@ -50,7 +50,7 @@ class ConnectionManager:
         if session_id in self.active_connections:
             del self.active_connections[session_id]
     
-    async def send_json(self, session_id: str, data: Dict[str, Any]):
+    async def send_json(self, session_id: str, data: dict[str, Any]):
         """Envía JSON a un cliente específico."""
         if session_id in self.active_connections:
             await self.active_connections[session_id].send_json(data)
@@ -115,7 +115,7 @@ _AFFIRMATIVE_RE = _re.compile(
 async def handle_chat_message(
     websocket: WebSocket,
     session: Session,
-    data: Dict[str, Any],
+    data: dict[str, Any],
 ) -> None:
     """Maneja un mensaje de chat."""
     raw_content = data.get("content", "").strip()
@@ -300,7 +300,7 @@ async def handle_chat_message(
                     response = await asyncio.wait_for(
                         _drain_and_wait(), timeout=session.agent_task_timeout
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     agent_task.cancel()
                     metric.finish("timeout")
                     await websocket.send_json({
@@ -461,7 +461,7 @@ async def handle_chat_message(
 async def handle_approval(
     websocket: WebSocket,
     session: Session,
-    data: Dict[str, Any],
+    data: dict[str, Any],
 ) -> None:
     """Maneja una respuesta de aprobación."""
     approved = data.get("approved", False)
@@ -645,7 +645,7 @@ async def _run_plan_auto(
 async def handle_plan_action(
     websocket: WebSocket,
     session: Session,
-    data: Dict[str, Any],
+    data: dict[str, Any],
 ) -> None:
     """Maneja acciones sobre planes."""
     action = data.get("action")
@@ -707,7 +707,7 @@ async def handle_plan_action(
 async def handle_cancel(
     websocket: WebSocket,
     session: Session,
-    data: Dict[str, Any],
+    data: dict[str, Any],
 ) -> None:
     """Cancela la ejecución del agente en curso."""
     SessionManager.request_cancel(session.id)
@@ -720,7 +720,7 @@ async def handle_cancel(
 async def handle_stream_chat(
     websocket: WebSocket,
     session: Session,
-    data: Dict[str, Any],
+    data: dict[str, Any],
 ) -> None:
     """Maneja chat con streaming de respuesta."""
     content = data.get("content", "").strip()

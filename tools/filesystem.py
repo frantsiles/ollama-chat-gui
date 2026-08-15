@@ -5,7 +5,6 @@ from __future__ import annotations
 import fnmatch
 import os
 from pathlib import Path
-from typing import List
 
 from config import MAX_READ_CHARS, MAX_SCAN_RESULTS, RAG_IGNORED_DIRS
 from tools.base import BaseTool, ToolError, ToolParameter, ToolResult
@@ -61,7 +60,7 @@ class ReadFileTool(BaseTool):
     description = "Lee el contenido de un archivo de texto"
     is_write_operation = False
     
-    def get_parameters(self) -> List[ToolParameter]:
+    def get_parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
                 name="path",
@@ -134,7 +133,7 @@ class WriteFileTool(BaseTool):
     description = "Escribe contenido en un archivo (crea si no existe)"
     is_write_operation = True
     
-    def get_parameters(self) -> List[ToolParameter]:
+    def get_parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
                 name="path",
@@ -198,7 +197,7 @@ class ListDirectoryTool(BaseTool):
     description = "Lista archivos y carpetas en un directorio"
     is_write_operation = False
     
-    def get_parameters(self) -> List[ToolParameter]:
+    def get_parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
                 name="path",
@@ -242,7 +241,7 @@ class ListDirectoryTool(BaseTool):
                 )
             
             iterator = dir_path.rglob("*") if recursive else dir_path.glob("*")
-            entries: List[str] = []
+            entries: list[str] = []
             
             for item in iterator:
                 if len(entries) >= MAX_SCAN_RESULTS:
@@ -292,7 +291,7 @@ class CreateDirectoryTool(BaseTool):
     description = "Crea un directorio (y sus padres si es necesario)"
     is_write_operation = True
     
-    def get_parameters(self) -> List[ToolParameter]:
+    def get_parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
                 name="path",
@@ -330,7 +329,7 @@ class SearchFilesTool(BaseTool):
     description = "Busca archivos que coincidan con un patrón glob"
     is_write_operation = False
     
-    def get_parameters(self) -> List[ToolParameter]:
+    def get_parameters(self) -> list[ToolParameter]:
         return [
             ToolParameter(
                 name="pattern",
@@ -372,7 +371,7 @@ class SearchFilesTool(BaseTool):
                     error=f"'{path}' no es un directorio.",
                 )
             
-            matches: List[str] = []
+            matches: list[str] = []
             for item in search_dir.rglob("*"):
                 if len(matches) >= MAX_SCAN_RESULTS:
                     break

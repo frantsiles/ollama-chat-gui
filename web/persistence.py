@@ -15,7 +15,7 @@ import logging
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("persistence")
 
@@ -125,8 +125,8 @@ class PersistenceDB:
     def save_session(
         self,
         session_id: str,
-        meta: Dict[str, Any],
-        message_dicts: List[Dict[str, Any]],
+        meta: dict[str, Any],
+        message_dicts: list[dict[str, Any]],
     ) -> None:
         """
         Persiste una sesión completa.
@@ -219,7 +219,7 @@ class PersistenceDB:
 
     def load_session(
         self, session_id: str
-    ) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
         """
         Carga una sesión desde SQLite.
 
@@ -274,7 +274,7 @@ class PersistenceDB:
             logger.error("Error deleting session %s: %s", session_id, exc)
             return False
 
-    def list_sessions(self) -> List[Dict[str, Any]]:
+    def list_sessions(self) -> list[dict[str, Any]]:
         """Retorna metadatos de todas las sesiones (más recientes primero)."""
         try:
             with self._connect() as conn:
@@ -341,7 +341,7 @@ class PersistenceDB:
 
     def load_workspace_memories(
         self, workspace_root: str, limit: int = 50
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Carga memorias activas para un workspace."""
         try:
             with self._connect() as conn:
@@ -398,7 +398,7 @@ class PersistenceDB:
         except sqlite3.Error as exc:
             logger.error("Error saving profile trait: %s", exc)
 
-    def load_profile_traits(self, limit: int = 30) -> List[Dict[str, Any]]:
+    def load_profile_traits(self, limit: int = 30) -> list[dict[str, Any]]:
         """Carga rasgos activos del perfil de usuario."""
         try:
             with self._connect() as conn:

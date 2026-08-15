@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import streamlit as st
 
 from config import (
-    ApprovalLevel,
     DEFAULT_WORKSPACE_ROOT,
     OLLAMA_BASE_URL,
     OLLAMA_DEFAULT_MODEL,
+    ApprovalLevel,
     OperationMode,
 )
 
@@ -72,7 +72,7 @@ class AppState:
     # ==========================================================================
     
     @classmethod
-    def get_messages(cls) -> List[Dict[str, Any]]:
+    def get_messages(cls) -> list[dict[str, Any]]:
         """Obtiene la lista de mensajes."""
         return st.session_state.get(cls.MESSAGES_KEY, [])
     
@@ -92,12 +92,12 @@ class AppState:
     # ==========================================================================
     
     @classmethod
-    def get_models(cls) -> List[str]:
+    def get_models(cls) -> list[str]:
         """Obtiene la lista de modelos."""
         return st.session_state.get(cls.MODELS_KEY, [])
     
     @classmethod
-    def set_models(cls, models: List[str]) -> None:
+    def set_models(cls, models: list[str]) -> None:
         """Establece la lista de modelos."""
         st.session_state[cls.MODELS_KEY] = models
     
@@ -177,12 +177,12 @@ class AppState:
     # ==========================================================================
     
     @classmethod
-    def get_pending_approval(cls) -> Optional[Dict[str, Any]]:
+    def get_pending_approval(cls) -> dict[str, Any] | None:
         """Obtiene la aprobación pendiente."""
         return st.session_state.get(cls.PENDING_APPROVAL_KEY)
     
     @classmethod
-    def set_pending_approval(cls, approval: Optional[Dict[str, Any]]) -> None:
+    def set_pending_approval(cls, approval: dict[str, Any] | None) -> None:
         """Establece la aprobación pendiente."""
         st.session_state[cls.PENDING_APPROVAL_KEY] = approval
     
@@ -196,12 +196,12 @@ class AppState:
     # ==========================================================================
     
     @classmethod
-    def get_current_plan(cls) -> Optional[Dict[str, Any]]:
+    def get_current_plan(cls) -> dict[str, Any] | None:
         """Obtiene el plan actual."""
         return st.session_state.get(cls.CURRENT_PLAN_KEY)
     
     @classmethod
-    def set_current_plan(cls, plan: Optional[Dict[str, Any]]) -> None:
+    def set_current_plan(cls, plan: dict[str, Any] | None) -> None:
         """Establece el plan actual."""
         st.session_state[cls.CURRENT_PLAN_KEY] = plan
     
@@ -215,22 +215,22 @@ class AppState:
     # ==========================================================================
     
     @classmethod
-    def get_agent_trace(cls) -> List[str]:
+    def get_agent_trace(cls) -> list[str]:
         """Obtiene la traza del agente."""
         return st.session_state.get(cls.AGENT_TRACE_KEY, [])
     
     @classmethod
-    def set_agent_trace(cls, trace: List[str]) -> None:
+    def set_agent_trace(cls, trace: list[str]) -> None:
         """Establece la traza del agente."""
         st.session_state[cls.AGENT_TRACE_KEY] = trace
     
     @classmethod
-    def get_rag_sources(cls) -> List[str]:
+    def get_rag_sources(cls) -> list[str]:
         """Obtiene las fuentes RAG."""
         return st.session_state.get(cls.RAG_SOURCES_KEY, [])
     
     @classmethod
-    def set_rag_sources(cls, sources: List[str]) -> None:
+    def set_rag_sources(cls, sources: list[str]) -> None:
         """Establece las fuentes RAG."""
         st.session_state[cls.RAG_SOURCES_KEY] = sources
     
