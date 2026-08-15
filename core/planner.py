@@ -75,12 +75,19 @@ class PlanManager:
         )
     
     def _call_model(self, messages: List[Dict[str, Any]]) -> str:
-        """Llama al modelo forzando JSON (el plan siempre es un objeto JSON)."""
+        """Llama al modelo forzando el schema del plan (structured outputs).
+
+        Los providers sin soporte de schema degradan a JSON legacy; el
+        pipeline de extracción/sanitización posterior cubre ese caso.
+        """
+        from config import DECISION_TEMPERATURE
+        from llm.schemas import PLAN_SCHEMA
+
         return self.client.chat(
             model=self.model,
             messages=messages,
-            options={"temperature": self.temperature},
-            fmt="json",
+            options={"temperature": min(self.temperature, DECISION_TEMPERATURE)},
+            fmt=PLAN_SCHEMA,
         )
     
     @staticmethod

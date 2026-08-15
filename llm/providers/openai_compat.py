@@ -85,6 +85,7 @@ class OpenAICompatProvider(LLMProvider):
         messages: List[Dict[str, Any]],
         stream: bool,
         options: Dict[str, Any] | None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         payload: Dict[str, Any] = {"model": model, "messages": messages, "stream": stream}
         if options:
@@ -92,6 +93,13 @@ class OpenAICompatProvider(LLMProvider):
                 payload["temperature"] = options["temperature"]
             if "num_predict" in options:
                 payload["max_tokens"] = options["num_predict"]
+        if fmt == "json":
+            payload["response_format"] = {"type": "json_object"}
+        elif isinstance(fmt, dict):
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "response", "schema": fmt},
+            }
         return payload
 
     def chat(
@@ -99,15 +107,12 @@ class OpenAICompatProvider(LLMProvider):
         model: str,
         messages: List[Dict[str, Any]],
         options: Dict[str, Any] | None = None,
-        fmt: str | None = None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> str:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
-        if fmt == "json":
-            # Algunos providers soportan response_format
-            pass
 
-        payload = self._build_payload(model, messages, stream=False, options=options)
+        payload = self._build_payload(model, messages, stream=False, options=options, fmt=fmt)
         url = f"{self.base_url}/chat/completions"
         try:
             response = requests.post(url, json=payload, headers=self._headers(), timeout=self.timeout)
@@ -120,6 +125,10 @@ class OpenAICompatProvider(LLMProvider):
             data = {}
 
         if not response.ok:
+            # No todos los providers OpenAI-compatible soportan json_schema:
+            # degradar una vez a json_object antes de rendirse.
+            if isinstance(fmt, dict) and response.status_code == 400:
+                return self.chat(model, messages, options=options, fmt="json")
             err = data.get("error", {})
             msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
             raise LLMClientError(f"Error del provider ({response.status_code}): {msg}")
@@ -141,7 +150,7 @@ class OpenAICompatProvider(LLMProvider):
         model: str,
         messages: List[Dict[str, Any]],
         options: Dict[str, Any] | None = None,
-        fmt: str | None = None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> Iterable[str]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
@@ -212,7 +221,7 @@ class OpenAICompatProvider(LLMProvider):
         message = data.get("choices", [{}])[0].get("message", {})
         content = message.get("content", "") or ""
 
-        # Normalizar tool_calls de OpenAI → formato interno
+        # Normalizar tool_calls de OpenAI → formato interno (preservando id)
         raw_calls = message.get("tool_calls", []) or []
         tool_calls = []
         for tc in raw_calls:
@@ -222,6 +231,52 @@ class OpenAICompatProvider(LLMProvider):
                 args = json.loads(args_raw) if isinstance(args_raw, str) else args_raw
             except json.JSONDecodeError:
                 args = {}
-            tool_calls.append({"function": {"name": fn.get("name", ""), "arguments": args}})
+            tool_calls.append({
+                "id": tc.get("id"),
+                "function": {"name": fn.get("name", ""), "arguments": args},
+            })
 
         return {"content": content, "tool_calls": tool_calls}
+
+    # ------------------------------------------------------------------
+    # Protocolo de mensajes de tool calling (formato OpenAI)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _call_id(tool_call: Dict[str, Any], index: int = 0) -> str:
+        """ID del tool call, generando uno determinista si el provider no lo dio."""
+        return tool_call.get("id") or f"call_{index}_{tool_call.get('function', {}).get('name', 'tool')}"
+
+    def format_assistant_tool_message(
+        self,
+        content: str,
+        tool_calls: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """OpenAI exige id + type y arguments serializados como string JSON."""
+        calls = []
+        for i, tc in enumerate(tool_calls):
+            fn = tc.get("function", {})
+            calls.append({
+                "id": self._call_id(tc, i),
+                "type": "function",
+                "function": {
+                    "name": fn.get("name", ""),
+                    "arguments": json.dumps(fn.get("arguments", {}) or {}),
+                },
+            })
+        msg: Dict[str, Any] = {"role": "assistant", "tool_calls": calls}
+        # OpenAI acepta content null junto a tool_calls; solo incluir si hay texto
+        msg["content"] = content or None
+        return msg
+
+    def format_tool_result_message(
+        self,
+        tool_call: Dict[str, Any],
+        output: str,
+    ) -> Dict[str, Any]:
+        """OpenAI exige tool_call_id que apunte al call del mensaje anterior."""
+        return {
+            "role": "tool",
+            "tool_call_id": self._call_id(tool_call),
+            "content": output,
+        }

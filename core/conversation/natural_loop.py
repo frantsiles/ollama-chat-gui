@@ -93,15 +93,24 @@ class NaturalConversationLoop:
         tool_results: List[ToolResult] = []
         # Respuestas intermedias del asistente (solo durante este run, no se
         # persisten — son razonamiento intermedio que el usuario no necesita ver).
-        # Los tool results SÍ se persisten en conversation para que el modelo
-        # recuerde en turnos futuros qué leyó/ejecutó.
         extra_messages: List[Dict[str, Any]] = []
+        # Tool results pendientes de persistir en conversation AL TERMINAR el
+        # run. Durante el run viven solo en extra_messages; persistirlos al
+        # momento duplicaría cada resultado en el prompt (conversation +
+        # extra_messages) y desordenaría la cronología.
+        pending_persist: List[str] = []
         consecutive_empty = 0
+
+        def _flush_history() -> None:
+            for text in pending_persist:
+                conversation.add_system_message(text)
+            pending_persist.clear()
 
         for step in range(1, limit + 1):
             self._state.step_count = step
 
             if cancel_check and cancel_check():
+                _flush_history()
                 return LoopResult(
                     status="cancelled",
                     final_response="Ejecución cancelada por el usuario.",
@@ -116,6 +125,7 @@ class NaturalConversationLoop:
             try:
                 response_text = self._llm_call(messages, None)  # sin fmt="json"
             except OllamaClientError as exc:
+                _flush_history()
                 return LoopResult(
                     status="error",
                     error=str(exc),
@@ -131,6 +141,7 @@ class NaturalConversationLoop:
                         if tool_results
                         else "Sin resultado."
                     )
+                    _flush_history()
                     return LoopResult(
                         status="completed",
                         final_response=summary,
@@ -163,6 +174,7 @@ class NaturalConversationLoop:
 
             # Sin tool → respuesta final
             if not parsed.get("needs_tool"):
+                _flush_history()
                 return LoopResult(
                     status="completed",
                     final_response=response_text,
@@ -174,6 +186,7 @@ class NaturalConversationLoop:
 
             if not tool_name:
                 # Parser inconsistente: needs_tool=true sin nombre → tratar como final
+                _flush_history()
                 return LoopResult(
                     status="completed",
                     final_response=response_text,
@@ -202,7 +215,8 @@ class NaturalConversationLoop:
             # Aprobación
             is_write = self._is_write_operation(tool_call)
             if self._requires_approval(tool_call, is_write):
-                # Persistir la respuesta del modelo en la conversación antes de pausar
+                # Persistir historial y respuesta del modelo antes de pausar
+                _flush_history()
                 conversation.add_assistant_message(response_text)
                 return LoopResult(
                     status="awaiting_approval",
@@ -237,26 +251,28 @@ class NaturalConversationLoop:
 
             # Razonamiento intermedio del asistente: solo en este run
             extra_messages.append({"role": "assistant", "content": response_text})
-            # Tool result: PERSISTENTE en conversation para que el modelo
-            # recuerde en turnos futuros qué leyó/ejecutó/encontró.
+            # Tool result: en extra_messages durante el run (cronología correcta,
+            # justo después del turno que lo pidió) y diferido a conversation
+            # al terminar, para que el modelo lo recuerde en turnos futuros.
             tool_result_text = PromptManager.build_tool_result_context(
                 step=step,
                 tool_call=str(tool_call),
                 result=result.output if result.success else f"Error: {result.error}",
             )
-            conversation.add_system_message(tool_result_text)
-            # Nudge: indicar al modelo que decida si la tarea está completa.
+            extra_messages.append({"role": "system", "content": tool_result_text})
+            pending_persist.append(tool_result_text)
+            # Nudge: el modelo decide si continuar o cerrar — sin empujarlo a parar.
             extra_messages.append({
                 "role": "system",
                 "content": (
-                    "La herramienta se ejecutó correctamente. "
-                    "Si la tarea del usuario ya está resuelta, responde en UNA sola frase "
-                    "confirmando qué hiciste (ej: 'Listo, creé el archivo X con Y.'). "
-                    "NO muestres el contenido del archivo ni bloques de código — solo confirma. "
-                    "Solo usa otra herramienta si falta algo concreto para completar la tarea."
+                    "Resultado recibido. Si la tarea del usuario requiere más pasos, "
+                    "continúa con la siguiente herramienta. Si ya está completa, "
+                    "responde con un resumen breve de lo que hiciste y lo que encontraste "
+                    "(sin repetir el contenido íntegro de archivos ya mostrado)."
                 ),
             })
 
+        _flush_history()
         return LoopResult(
             status="max_steps",
             final_response=f"Se alcanzó el límite de {limit} pasos.",

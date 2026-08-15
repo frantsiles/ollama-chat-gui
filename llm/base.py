@@ -30,9 +30,14 @@ class LLMProvider(ABC):
         model: str,
         messages: List[Dict[str, Any]],
         options: Dict[str, Any] | None = None,
-        fmt: str | None = None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> str:
-        """Chat sin streaming. Retorna el texto de la respuesta."""
+        """Chat sin streaming. Retorna el texto de la respuesta.
+
+        Args:
+            fmt: None (texto libre), "json" (JSON sin schema) o un dict con
+                 un JSON schema para structured outputs.
+        """
 
     @abstractmethod
     def chat_stream(
@@ -40,7 +45,7 @@ class LLMProvider(ABC):
         model: str,
         messages: List[Dict[str, Any]],
         options: Dict[str, Any] | None = None,
-        fmt: str | None = None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> Iterable[str]:
         """Chat con streaming. Yield de fragmentos de texto."""
 
@@ -57,8 +62,13 @@ class LLMProvider(ABC):
         Retorna dict normalizado:
             {
                 "content": str,
-                "tool_calls": [{"function": {"name": str, "arguments": dict}}]
+                "tool_calls": [
+                    {"id": str | None, "function": {"name": str, "arguments": dict}}
+                ]
             }
+
+        El "id" (si el provider lo entrega) DEBE preservarse: es necesario
+        para reinyectar los resultados con format_tool_result_message().
         """
 
     @abstractmethod
@@ -91,3 +101,43 @@ class LLMProvider(ABC):
     def is_available(self) -> bool:
         """True si el provider está accesible."""
         return True
+
+    # ------------------------------------------------------------------
+    # Protocolo de mensajes de tool calling
+    #
+    # Cada provider tiene su propio formato de "asistente pidió tools" y
+    # "resultado de tool". Estas implementaciones por defecto siguen el
+    # formato de Ollama; OpenAI-compatible y Anthropic las sobreescriben.
+    # ------------------------------------------------------------------
+
+    def format_assistant_tool_message(
+        self,
+        content: str,
+        tool_calls: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Mensaje del asistente que contiene tool calls (formato normalizado)."""
+        return {
+            "role": "assistant",
+            "content": content or "",
+            "tool_calls": [
+                {"function": tc.get("function", {})}
+                for tc in tool_calls
+            ],
+        }
+
+    def format_tool_result_message(
+        self,
+        tool_call: Dict[str, Any],
+        output: str,
+    ) -> Dict[str, Any]:
+        """Mensaje con el resultado de una tool (formato normalizado).
+
+        Args:
+            tool_call: tool call normalizado ({"id": ..., "function": {...}}).
+            output: salida (o error) de la ejecución.
+        """
+        msg: Dict[str, Any] = {"role": "tool", "content": output}
+        name = tool_call.get("function", {}).get("name")
+        if name:
+            msg["tool_name"] = name
+        return msg

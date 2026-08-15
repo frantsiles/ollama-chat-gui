@@ -118,8 +118,12 @@ class Agent:
             workspace_root=self.workspace_root,
             current_cwd=self.current_cwd,
         )
+        from config import DECISION_TEMPERATURE
+
         self._response_parser = NaturalResponseParser(
-            llm_call=lambda msgs, fmt: self._call_model(msgs, fmt=fmt),
+            llm_call=lambda msgs, fmt: self._call_model(
+                msgs, fmt=fmt, temperature=DECISION_TEMPERATURE
+            ),
             dynamic_tool_names=list(self.tool_registry._dynamic_executors.keys()),
         )
         self._reflector = ResponseReflector(
@@ -166,20 +170,24 @@ class Agent:
         self,
         messages: List[Dict[str, Any]],
         stream: bool = False,
-        fmt: Optional[str] = None,
+        fmt: Optional[Any] = None,
+        temperature: Optional[float] = None,
     ) -> str:
         """Llama al modelo y retorna la respuesta.
 
         Args:
-            fmt: "json" para forzar JSON válido (recomendado en modo Agent/Plan
-                 para que modelos como Gemma sigan el formato de tool calls).
+            fmt: "json" para forzar JSON válido, o un dict con JSON schema
+                 para structured outputs (llamadas de decisión).
+            temperature: override puntual (p.ej. DECISION_TEMPERATURE para
+                 llamadas de decisión); si es None usa la de la sesión.
         """
+        temp = self.temperature if temperature is None else temperature
         if stream:
             chunks = []
             for chunk in self.client.chat_stream(
                 model=self.model,
                 messages=messages,
-                options={"temperature": self.temperature},
+                options={"temperature": temp},
                 fmt=fmt,
             ):
                 chunks.append(chunk)
@@ -188,7 +196,7 @@ class Agent:
             result = self.client.chat(
                 model=self.model,
                 messages=messages,
-                options={"temperature": self.temperature},
+                options={"temperature": temp},
                 fmt=fmt,
             )
             usage = self.client.last_usage
@@ -393,11 +401,13 @@ class Agent:
             return cached[2]
 
         def llm_call(messages: List[Dict[str, Any]]) -> str:
+            from llm.schemas import MEMORY_SCHEMA
+
             return self.client.chat(
                 model=self.model,
                 messages=messages,
                 options={"temperature": 0.2},
-                fmt="json",
+                fmt=MEMORY_SCHEMA,
             )
 
         hook = MemoryExtractionHook(
@@ -581,14 +591,19 @@ class Agent:
         step_callback: Optional[Callable[[str], None]] = None,
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> AgentResponse:
-        """Ciclo agente usando native function calling de Ollama.
+        """Ciclo agente usando native function calling del provider.
 
         El modelo devuelve tool_calls en JSON estructurado — no se necesita
         parser ni heurísticas regex.
+
+        Durante el run, los tool calls y sus resultados viven SOLO en
+        `extra_messages` (con el formato nativo del provider, cronología
+        correcta). Al terminar —por cualquier vía— se persisten como texto en
+        `conversation` para que el modelo los recuerde en turnos futuros.
+        Así se evita que cada resultado aparezca duplicado en el prompt.
         """
         import json as _json
         from llm.prompts import NATURAL_AGENT_SYSTEM_PROMPT
-        from core.models import Message, MessageRole
 
         self._context_builder.set_cwd(self.current_cwd)
         workspace_ctx = self._context_builder.build_workspace_snapshot()
@@ -604,24 +619,39 @@ class Agent:
         tools = self.tool_registry.get_ollama_tools()
         limit = self._max_agent_steps or MAX_AGENT_STEPS
         tool_results: List[ToolResult] = []
-        # Mensajes de tool calls + resultados acumulados en este turno.
-        # No se persisten en `conversation` (igual que en el loop natural) salvo
-        # los tool results que el modelo necesita recordar en turnos futuros.
+        # Historial de tool calling de ESTE run, en formato nativo del provider.
         extra_messages: List[Dict[str, Any]] = []
+        # Resúmenes en texto pendientes de persistir en conversation al terminar.
+        pending_persist: List[str] = []
+        # Detección de bucles: cuántas veces se ejecutó cada (tool, args) y
+        # cuántas correcciones anti-repetición se han inyectado ya.
+        executed_signatures: Dict[str, int] = {}
+        repeat_corrections = 0
+
+        def _flush_history() -> None:
+            """Persiste los tool results en la conversación (memoria entre turnos)."""
+            for text in pending_persist:
+                conversation.add_system_message(text)
+            pending_persist.clear()
+
+        def _finish(content_: str, status_: str, error_: Optional[str] = None) -> AgentResponse:
+            _flush_history()
+            self.state.is_running = False
+            return AgentResponse(
+                content=content_,
+                status=status_,
+                error=error_,
+                trace=self.state.trace,
+                tool_results=tool_results,
+                new_cwd=str(self.current_cwd),
+                token_usage=dict(self._token_usage),
+            )
 
         for step in range(1, limit + 1):
             self.state.step_count = step
 
             if cancel_check and cancel_check():
-                self.state.is_running = False
-                return AgentResponse(
-                    content="Ejecución cancelada por el usuario.",
-                    status="cancelled",
-                    trace=self.state.trace,
-                    tool_results=tool_results,
-                    new_cwd=str(self.current_cwd),
-                    token_usage=dict(self._token_usage),
-                )
+                return _finish("Ejecución cancelada por el usuario.", "cancelled")
 
             self.state.add_trace(f"Paso {step}: native tool call")
             if step_callback:
@@ -638,14 +668,7 @@ class Agent:
                     options={"temperature": self.temperature},
                 )
             except OllamaClientError as exc:
-                self.state.is_running = False
-                return AgentResponse(
-                    content="",
-                    status="error",
-                    error=str(exc),
-                    trace=self.state.trace,
-                    tool_results=tool_results,
-                )
+                return _finish("", "error", error_=str(exc))
 
             content = raw.get("content", "") or ""
             tool_calls_raw = raw.get("tool_calls", []) or []
@@ -658,7 +681,7 @@ class Agent:
                     parsed = self._parse_natural_response(content)
                     if parsed.get("needs_tool"):
                         tool_name = parsed.get("tool", "")
-                        tool_args  = parsed.get("args", {})
+                        tool_args = parsed.get("args", {})
                         # Reinyectar como si fuera un tool_call nativo y continuar
                         tool_calls_raw = [{
                             "function": {
@@ -674,6 +697,7 @@ class Agent:
                 if not tool_calls_raw:
                     # Realmente no hay tool → respuesta final
                     final = self._reflect_on_response(content or "Listo.", conversation)
+                    _flush_history()
                     conversation.add_assistant_message(final)
                     self.state.is_running = False
                     return AgentResponse(
@@ -685,104 +709,162 @@ class Agent:
                         token_usage=dict(self._token_usage),
                     )
 
-            # Procesar primer tool call (Ollama devuelve uno por turno en práctica)
-            tc = tool_calls_raw[0]
-            func = tc.get("function", {})
-            tool_name = func.get("name", "")
-            tool_args = func.get("arguments", {})
-            if isinstance(tool_args, str):
-                try:
-                    tool_args = _json.loads(tool_args)
-                except Exception:
-                    tool_args = {}
+            # Normalizar TODOS los tool calls del turno (id + arguments dict).
+            # El id debe ser estable: se reutiliza al emparejar cada resultado.
+            for i, tc in enumerate(tool_calls_raw):
+                if not tc.get("id"):
+                    tc["id"] = f"call_s{step}_{i}"
+                func = tc.get("function", {})
+                args = func.get("arguments", {})
+                if isinstance(args, str):
+                    try:
+                        args = _json.loads(args)
+                    except Exception:
+                        args = {}
+                func["arguments"] = args if isinstance(args, dict) else {}
+                tc["function"] = func
 
-            tool_call = ToolCall(
-                tool=tool_name,
-                args=tool_args if isinstance(tool_args, dict) else {},
+            # El assistant message referencia exactamente los calls del turno;
+            # cada uno recibirá su mensaje de resultado (o error de validación).
+            extra_messages.append(
+                self.client.format_assistant_tool_message(content, tool_calls_raw)
             )
 
-            # Validación
-            validation_error = self.tool_registry.validate_tool_call(tool_call)
-            if validation_error:
-                self.state.add_trace(f"Paso {step}: tool inválida — {validation_error}")
-                extra_messages.append({
-                    "role": "assistant", "content": content,
-                    "tool_calls": tool_calls_raw,
-                })
-                extra_messages.append({
-                    "role": "tool",
-                    "content": f"Error: {validation_error}",
-                })
-                continue
+            for tc in tool_calls_raw:
+                tool_name = tc["function"].get("name", "")
+                tool_args = tc["function"].get("arguments", {})
+                tool_call = ToolCall(tool=tool_name, args=tool_args)
 
-            # Aprobación
-            is_write = self.tool_registry.is_tool_write_operation(tool_call)
-            if self.approval_manager.requires_approval(tool_call, is_write):
-                if content:
-                    conversation.add_assistant_message(content)
-                self.state.pending_approval = tool_call
-                self.approval_manager.request_approval(tool_call)
-                self.state.is_running = False
-                return AgentResponse(
-                    content=f"Se requiere aprobación para: `{tool_call}`",
-                    status="awaiting_approval",
-                    trace=self.state.trace,
-                    tool_results=tool_results,
-                    new_cwd=str(self.current_cwd),
-                    token_usage=dict(self._token_usage),
+                # Anti-bucle: el mismo tool con los mismos args repetido.
+                # Un repeat legítimo se permite (p.ej. git status tras cambios);
+                # a partir del tercero se devuelve una corrección en lugar de
+                # ejecutar, y si el modelo insiste se fuerza el cierre.
+                signature = f"{tool_name}:{_json.dumps(tool_args, sort_keys=True, default=str)}"
+                if executed_signatures.get(signature, 0) >= 2:
+                    repeat_corrections += 1
+                    self.state.add_trace(
+                        f"Paso {step}: repetición de {tool_name} bloqueada "
+                        f"({repeat_corrections}/3)"
+                    )
+                    if repeat_corrections >= 3:
+                        summary = self._summarize_tool_activity(tool_results)
+                        _flush_history()
+                        conversation.add_assistant_message(summary)
+                        self.state.is_running = False
+                        return AgentResponse(
+                            content=summary,
+                            status="completed",
+                            trace=self.state.trace,
+                            tool_results=tool_results,
+                            new_cwd=str(self.current_cwd),
+                            token_usage=dict(self._token_usage),
+                        )
+                    extra_messages.append(
+                        self.client.format_tool_result_message(
+                            tc,
+                            "Ya ejecutaste esta misma herramienta con estos mismos "
+                            "argumentos y el resultado no va a cambiar. NO la repitas. "
+                            "Si la tarea del usuario ya está completa, responde ahora "
+                            "en texto normal (sin tool calls) resumiendo lo que hiciste.",
+                        )
+                    )
+                    continue
+
+                # Validación — el error se devuelve al modelo como resultado
+                validation_error = self.tool_registry.validate_tool_call(tool_call)
+                if validation_error:
+                    self.state.add_trace(f"Paso {step}: tool inválida — {validation_error}")
+                    extra_messages.append(
+                        self.client.format_tool_result_message(
+                            tc, f"Error: {validation_error}"
+                        )
+                    )
+                    continue
+
+                # Aprobación — pausar el run; lo ya ejecutado se persiste
+                is_write = self.tool_registry.is_tool_write_operation(tool_call)
+                if self.approval_manager.requires_approval(tool_call, is_write):
+                    if content:
+                        conversation.add_assistant_message(content)
+                    self.state.pending_approval = tool_call
+                    self.approval_manager.request_approval(tool_call)
+                    return _finish(
+                        f"Se requiere aprobación para: `{tool_call}`",
+                        "awaiting_approval",
+                    )
+
+                # Ejecución
+                cmd_preview = tool_args.get("command", "") if tool_name == "run_command" else ""
+                if step_callback:
+                    if cmd_preview:
+                        step_callback({
+                            "kind": "exec",
+                            "message": f"Ejecutando: {tool_name}",
+                            "command": cmd_preview,
+                        })
+                    else:
+                        step_callback(f"Paso {step}: ejecutando {tool_name}")
+                result = self.tool_registry.execute(tool_call)
+                tool_results.append(result)
+                executed_signatures[signature] = executed_signatures.get(signature, 0) + 1
+
+                if result.new_cwd:
+                    self.set_cwd(Path(result.new_cwd))
+
+                tool_output = result.output if result.success else f"Error: {result.error}"
+
+                # Notificar resultado al frontend
+                if step_callback:
+                    step_callback({
+                        "kind": "tool_result",
+                        "tool": tool_name,
+                        "success": result.success,
+                        "output": (tool_output or "")[:2000],
+                    })
+
+                # Nudge embebido en el último resultado del turno: canal seguro
+                # para todos los providers (un system message intercalado no
+                # lo es). Ayuda a modelos locales pequeños a cerrar el ciclo.
+                is_last_of_turn = tc is tool_calls_raw[-1]
+                feedback = tool_output
+                if is_last_of_turn:
+                    feedback = (
+                        f"{tool_output}\n\n"
+                        "[Si la tarea del usuario ya está completa, responde ahora "
+                        "en texto normal sin más tool calls. Si falta algo, continúa "
+                        "con la siguiente herramienta.]"
+                    )
+
+                # Resultado en formato nativo (solo para este run)
+                extra_messages.append(
+                    self.client.format_tool_result_message(tc, feedback)
+                )
+                # Resumen textual para persistir al terminar el run (sin nudge)
+                pending_persist.append(
+                    PromptManager.build_tool_result_context(
+                        step=step,
+                        tool_call=str(tool_call),
+                        result=tool_output,
+                    )
                 )
 
-            # Ejecución
-            cmd_preview = tool_args.get("command", "") if tool_name == "run_command" else ""
-            if step_callback:
-                if cmd_preview:
-                    step_callback({
-                        "kind": "exec",
-                        "message": f"Ejecutando: {tool_name}",
-                        "command": cmd_preview,
-                    })
-                else:
-                    step_callback(f"Paso {step}: ejecutando {tool_name}")
-            result = self.tool_registry.execute(tool_call)
-            tool_results.append(result)
+        return _finish(f"Se alcanzó el límite de {limit} pasos.", "max_steps")
 
-            if result.new_cwd:
-                self.set_cwd(Path(result.new_cwd))
-
-            tool_output = result.output if result.success else f"Error: {result.error}"
-
-            # Notificar resultado al frontend
-            if step_callback:
-                step_callback({
-                    "kind": "tool_result",
-                    "tool": tool_name,
-                    "success": result.success,
-                    "output": (tool_output or "")[:2000],
-                })
-
-            # Añadir al contexto: respuesta del asistente + resultado de tool
-            extra_messages.append({
-                "role": "assistant", "content": content,
-                "tool_calls": tool_calls_raw,
-            })
-            extra_messages.append({"role": "tool", "content": tool_output})
-            # Persistir en conversation para que el modelo recuerde en turnos futuros
-            tool_result_text = PromptManager.build_tool_result_context(
-                step=step,
-                tool_call=str(tool_call),
-                result=tool_output,
-            )
-            conversation.add_system_message(tool_result_text)
-
-        self.state.is_running = False
-        return AgentResponse(
-            content=f"Se alcanzó el límite de {limit} pasos.",
-            status="max_steps",
-            trace=self.state.trace,
-            tool_results=tool_results,
-            new_cwd=str(self.current_cwd),
-            token_usage=dict(self._token_usage),
-        )
+    @staticmethod
+    def _summarize_tool_activity(tool_results: List[ToolResult]) -> str:
+        """Resumen de cierre cuando se fuerza el fin del ciclo (anti-bucle)."""
+        if not tool_results:
+            return "Listo."
+        lines = ["He completado las siguientes acciones:"]
+        seen = set()
+        for tr in tool_results:
+            desc = str(tr.tool_call)
+            if desc in seen:
+                continue
+            seen.add(desc)
+            estado = "✓" if tr.success else "✗"
+            lines.append(f"- {estado} {desc}")
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Modo natural: texto libre → parser → tool (sin JSON forzado)

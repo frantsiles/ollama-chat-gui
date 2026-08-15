@@ -24,15 +24,22 @@ _DEFAULT_MAX_TOKENS = 4096
 
 
 def _extract_system(messages: List[Dict[str, Any]]) -> tuple[str, List[Dict[str, Any]]]:
-    """Separa el system message de los demás (Anthropic requiere param separado)."""
-    system = ""
+    """Separa los system messages de los demás (Anthropic requiere param separado).
+
+    Concatena TODOS los system messages (prompt principal + contexto de
+    workspace + tool results persistidos) — quedarse solo con el último
+    haría perder el prompt principal.
+    """
+    system_parts: List[str] = []
     rest = []
     for msg in messages:
         if msg.get("role") == "system":
-            system = msg.get("content", "")
+            content = msg.get("content", "")
+            if isinstance(content, str) and content:
+                system_parts.append(content)
         else:
             rest.append(msg)
-    return system, rest
+    return "\n\n".join(system_parts), rest
 
 
 def _convert_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -116,7 +123,7 @@ class AnthropicProvider(LLMProvider):
         model: str,
         messages: List[Dict[str, Any]],
         options: Dict[str, Any] | None = None,
-        fmt: str | None = None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> str:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
@@ -165,7 +172,7 @@ class AnthropicProvider(LLMProvider):
         model: str,
         messages: List[Dict[str, Any]],
         options: Dict[str, Any] | None = None,
-        fmt: str | None = None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> Iterable[str]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
@@ -258,11 +265,12 @@ class AnthropicProvider(LLMProvider):
         text_parts = [b.get("text", "") for b in content_blocks if b.get("type") == "text"]
         content = "".join(text_parts)
 
-        # Normalizar tool_use de Anthropic → formato interno
+        # Normalizar tool_use de Anthropic → formato interno (preservando id)
         tool_calls = []
         for block in content_blocks:
             if block.get("type") == "tool_use":
                 tool_calls.append({
+                    "id": block.get("id"),
                     "function": {
                         "name": block.get("name", ""),
                         "arguments": block.get("input", {}),
@@ -270,3 +278,42 @@ class AnthropicProvider(LLMProvider):
                 })
 
         return {"content": content, "tool_calls": tool_calls}
+
+    # ------------------------------------------------------------------
+    # Protocolo de mensajes de tool calling (formato Anthropic)
+    # ------------------------------------------------------------------
+
+    def format_assistant_tool_message(
+        self,
+        content: str,
+        tool_calls: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Anthropic representa los tool calls como bloques tool_use."""
+        blocks: List[Dict[str, Any]] = []
+        if content:
+            blocks.append({"type": "text", "text": content})
+        for i, tc in enumerate(tool_calls):
+            fn = tc.get("function", {})
+            blocks.append({
+                "type": "tool_use",
+                "id": tc.get("id") or f"toolu_{i}_{fn.get('name', 'tool')}",
+                "name": fn.get("name", ""),
+                "input": fn.get("arguments", {}) or {},
+            })
+        return {"role": "assistant", "content": blocks}
+
+    def format_tool_result_message(
+        self,
+        tool_call: Dict[str, Any],
+        output: str,
+    ) -> Dict[str, Any]:
+        """Anthropic espera el resultado como bloque tool_result en un mensaje user."""
+        fn = tool_call.get("function", {})
+        return {
+            "role": "user",
+            "content": [{
+                "type": "tool_result",
+                "tool_use_id": tool_call.get("id") or f"toolu_0_{fn.get('name', 'tool')}",
+                "content": output,
+            }],
+        }

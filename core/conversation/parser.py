@@ -133,10 +133,12 @@ class WriteFileHeuristic(ToolHeuristic):
         # Pasado / declarativo (el modelo "finge" haber escrito ya)
         r'he (creado|escrito|implementado|generado)|'
         r'(he aquí|aquí está|aquí tienes|a continuación)\b[^.]{0,60}\barchivo\b|'
-        r'(aquí está|aquí tienes|here(?:\'s| is))\b|'
+        r'(here(?:\'s| is))\b[^.]{0,60}\bfile\b|'
         r'ha sido creado|fue creado|'
         r"i(?:'ve| have) (created|written|implemented|generated)|"
-        r'(el archivo|the file)\s+\S+\s+(ha sido creado|fue creado|contains?|contiene))\b',
+        # OJO: NO incluir "el archivo X contiene/contains" — es el patrón
+        # típico al REPORTAR una lectura, no una intención de escritura.
+        r'(el archivo|the file)\s+\S+\s+(ha sido creado|fue creado))\b',
         re.IGNORECASE,
     )
 
@@ -152,7 +154,17 @@ class WriteFileHeuristic(ToolHeuristic):
     )
 
     def match(self, response: str) -> Optional[Dict[str, Any]]:
-        has_intent = bool(self._INTENT.search(response))
+        # Escribir a disco es una operación con efectos: SOLO disparar con
+        # intención explícita (incluye el patrón declarativo "he creado...",
+        # que cubre al modelo fingiendo haber escrito ya). Un bloque de
+        # código + un path cercano NO bastan — el modelo puede estar
+        # simplemente mostrando código de ejemplo.
+        if not self._INTENT.search(response):
+            return None
+
+        # Contexto de lectura/análisis explícito → no es una escritura
+        if self._READ_CONTEXT.search(response):
+            return None
 
         code_match = _CODE_BLOCK_PATTERN.search(response)
         if not code_match:
@@ -166,28 +178,11 @@ class WriteFileHeuristic(ToolHeuristic):
         if not path:
             return None
 
-        # Si hay intent explícito, disparar directamente
-        if has_intent:
-            return {
-                "needs_tool": True,
-                "tool": "write_file",
-                "args": {"path": path, "content": content},
-            }
-
-        # Fallback agresivo: code block sustancial + path mencionado y NO es
-        # lectura/análisis explícito. Cubre respuestas declarativas del modelo
-        # como "El archivo test.py:" + code o "```python\n...\n```\ntest.py".
-        if self._READ_CONTEXT.search(response):
-            return None
-
-        if len(content.strip()) > 20:
-            return {
-                "needs_tool": True,
-                "tool": "write_file",
-                "args": {"path": path, "content": content},
-            }
-
-        return None
+        return {
+            "needs_tool": True,
+            "tool": "write_file",
+            "args": {"path": path, "content": content},
+        }
 
 
 class ReadFileHeuristic(ToolHeuristic):
@@ -471,7 +466,8 @@ class NaturalResponseParser:
         """
         Args:
             llm_call: callable(messages, fmt) → respuesta del modelo.
-                      fmt="json" cuando se necesite forzar JSON.
+                      fmt puede ser "json" o un dict con JSON schema
+                      (structured outputs).
             dynamic_tool_names: nombres de tools dinámicas (MCP, etc.) que
                                 deben aparecer en el prompt del parser LLM.
             extra_heuristics: heurísticas adicionales para tools dinámicas.
@@ -560,6 +556,8 @@ class NaturalResponseParser:
 
     def _llm_parse(self, response: str) -> Dict[str, Any]:
         """Delega al modelo secundario cuando ninguna heurística detectó nada."""
+        from llm.schemas import PARSER_SCHEMA
+
         truncated = response[: self._MAX_RESPONSE_LEN]
         messages = [
             {"role": "system", "content": self._get_parser_prompt()},
@@ -567,7 +565,7 @@ class NaturalResponseParser:
         ]
 
         try:
-            raw = self._llm_call(messages, "json").strip()
+            raw = self._llm_call(messages, PARSER_SCHEMA).strip()
             raw = self._strip_markdown_fences(raw)
             data = json.loads(raw)
             if isinstance(data, dict):

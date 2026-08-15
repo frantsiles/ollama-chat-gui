@@ -408,7 +408,9 @@ class PlanExecutor:
         })
 
         try:
-            raw = self._llm_call(messages, "json").strip()
+            from llm.schemas import STEP_RETRY_SCHEMA
+
+            raw = self._llm_call(messages, STEP_RETRY_SCHEMA).strip()
             raw = self._strip_markdown(raw)
             data = json.loads(raw)
 

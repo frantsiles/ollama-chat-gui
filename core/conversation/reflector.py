@@ -62,7 +62,9 @@ class ResponseReflector:
         ]
 
         try:
-            raw = self._llm_call(messages, REFLECTION_TEMPERATURE, "json").strip()
+            from llm.schemas import REFLECTION_SCHEMA
+
+            raw = self._llm_call(messages, REFLECTION_TEMPERATURE, REFLECTION_SCHEMA).strip()
             raw = self._strip_markdown_fences(raw)
             data = json.loads(raw)
             if data.get("status") == "needs_fix" and data.get("corrected_response"):

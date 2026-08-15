@@ -60,6 +60,9 @@ PYTHON_SANDBOX_TIMEOUT_SECONDS: int = int(os.getenv("PYTHON_SANDBOX_TIMEOUT_SECO
 # Agent Configuration
 # =============================================================================
 MAX_AGENT_STEPS: int = int(os.getenv("MAX_AGENT_STEPS", "100"))
+# Temperatura para llamadas "de decisión" (parser de intenciones, planes,
+# extracción de memorias). Baja = salidas deterministas y JSON más fiable.
+DECISION_TEMPERATURE: float = float(os.getenv("DECISION_TEMPERATURE", "0.2"))
 MAX_PLAN_STEPS = 20
 MAX_TOOL_REPAIR_CHARS = 16000
 # Tiempo máximo (segundos) para que el agente complete una tarea antes de cancelarse

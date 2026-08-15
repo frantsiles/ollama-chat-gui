@@ -97,7 +97,7 @@ class OllamaProvider(LLMProvider):
         model: str,
         messages: List[Dict[str, Any]],
         options: Dict[str, Any] | None = None,
-        fmt: str | None = None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> str:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
@@ -105,6 +105,8 @@ class OllamaProvider(LLMProvider):
         if options:
             payload["options"] = options
         if fmt:
+            # Ollama ≥0.5 acepta un JSON schema completo en "format";
+            # "json" (string) es el modo legacy sin schema.
             payload["format"] = fmt
 
         url = f"{self.base_url}/api/chat"
@@ -125,6 +127,10 @@ class OllamaProvider(LLMProvider):
                     f"El modelo '{model}' requiere autenticación. "
                     "Selecciona un modelo local."
                 )
+            # Versiones antiguas de Ollama no aceptan un schema en "format":
+            # reintentar una vez con el modo legacy "json".
+            if isinstance(fmt, dict) and "format" in err.lower():
+                return self.chat(model, messages, options=options, fmt="json")
             raise LLMClientError(err)
         try:
             response.raise_for_status()
@@ -146,7 +152,7 @@ class OllamaProvider(LLMProvider):
         model: str,
         messages: List[Dict[str, Any]],
         options: Dict[str, Any] | None = None,
-        fmt: str | None = None,
+        fmt: str | Dict[str, Any] | None = None,
     ) -> Iterable[str]:
         if not model:
             raise LLMClientError("Debes seleccionar un modelo.")
@@ -221,8 +227,18 @@ class OllamaProvider(LLMProvider):
             "duration_ms": data.get("total_duration", 0) // 1_000_000,
         }
         message = data.get("message", {})
-        # Ollama ya devuelve arguments como dict — formato interno directo
+        # Normalizar: Ollama ya devuelve arguments como dict; id es opcional.
+        tool_calls = []
+        for tc in message.get("tool_calls", []) or []:
+            fn = tc.get("function", {})
+            tool_calls.append({
+                "id": tc.get("id"),
+                "function": {
+                    "name": fn.get("name", ""),
+                    "arguments": fn.get("arguments", {}) or {},
+                },
+            })
         return {
             "content": message.get("content", ""),
-            "tool_calls": message.get("tool_calls", []),
+            "tool_calls": tool_calls,
         }
